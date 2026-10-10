@@ -95,6 +95,9 @@ func (s *Server) handleUploadOffset(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Upload-Offset", strconv.FormatInt(session.Offset, 10))
 	w.Header().Set("Upload-Length", strconv.FormatInt(session.Size, 10))
+	if session.Mode == upload.ModeDirect {
+		w.Header().Set("Upload-Part-Size", strconv.FormatInt(session.PartSize, 10))
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -134,6 +137,38 @@ func (s *Server) handleUploadWrite(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, uploadResponse(session))
 }
 
+// handleUploadParts mints presigned part URLs for a direct session.
+// The body names the 1-based part numbers: {"parts":[3,4,5,6]}.
+func (s *Server) handleUploadParts(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Parts []int `json:"parts"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+
+	urls, err := s.uploads.PartURLs(r.Context(), r.PathValue("token"), body.Parts)
+	if err != nil {
+		writeUploadError(w, r, err)
+		return
+	}
+
+	parts := make([]storage.PartURL, 0, len(urls))
+	parts = append(parts, urls...)
+	writeJSON(w, r, http.StatusOK, map[string]any{"parts": parts})
+}
+
+// handleUploadComplete publishes a direct session once storage holds
+// every declared byte.
+func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
+	session, err := s.uploads.Complete(r.Context(), r.PathValue("token"))
+	if err != nil {
+		writeUploadError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, uploadResponse(session))
+}
+
 func (s *Server) handleUploadCancel(w http.ResponseWriter, r *http.Request) {
 	tusHeaders(w)
 	if err := s.uploads.Cancel(r.Context(), r.PathValue("token")); err != nil {
@@ -150,6 +185,8 @@ type uploadStatus struct {
 	Offset    int64  `json:"offset"`
 	Complete  bool   `json:"complete"`
 	ExpiresAt string `json:"expires_at"`
+	Mode      string `json:"mode"`
+	PartSize  int64  `json:"part_size,omitempty"`
 }
 
 func uploadResponse(s upload.Session) uploadStatus {
@@ -160,6 +197,8 @@ func uploadResponse(s upload.Session) uploadStatus {
 		Offset:    s.Offset,
 		Complete:  s.Complete,
 		ExpiresAt: s.ExpiresAt.Format("2006-01-02T15:04:05Z"),
+		Mode:      s.Mode,
+		PartSize:  s.PartSize,
 	}
 }
 
@@ -200,6 +239,9 @@ func writeUploadError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, upload.ErrTooLarge):
 		writeProblem(w, r, http.StatusRequestEntityTooLarge, CodeTooLarge,
 			"Too large", "The declared length is beyond what this instance accepts.")
+	case errors.Is(err, upload.ErrWrongMode):
+		writeProblem(w, r, http.StatusConflict, CodeConflict,
+			"Wrong transfer mode", "This upload receives bytes directly into storage: PUT each part to its presigned URL, then complete the session.")
 	case errors.Is(err, storage.ErrExist):
 		writeProblem(w, r, http.StatusConflict, CodeConflict,
 			"Already exists", "Something already exists at the destination.")

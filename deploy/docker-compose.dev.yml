@@ -1,0 +1,58 @@
+# Dev stack: Zefile in S3 mode plus SeaweedFS as a local bucket.
+#
+#   docker compose -f deploy/docker-compose.dev.yml up --build -d
+#
+# Iterating on the interface without rebuilding: run `pnpm dev` in web/ —
+# its proxy already forwards /api to localhost:8080.
+
+services:
+  weed:
+    image: chrislusf/seaweedfs:latest
+    command:
+      - mini
+      - -dir=/data
+      - -bucket=my-bucket
+      - -s3.port=8333
+      - -s3.iam.config=/etc/seaweedfs/iam.json
+    volumes:
+      - weed-data:/data
+      - ./seaweedfs/iam.json:/etc/seaweedfs/iam.json:ro
+    ports:
+      - "8334:8333"
+      - "8888:8888"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://127.0.0.1:8333/ | grep -q AccessDenied"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  zefile:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    depends_on:
+      - weed
+    restart: unless-stopped
+    environment:
+      ZEFILE_APP_URL: http://localhost:8080
+      ZEFILE_STORAGE_BACKEND: s3
+      ZEFILE_S3_ENDPOINT: ${ZEFILE_S3_ENDPOINT-http://weed:8333}
+      ZEFILE_S3_REGION: ${ZEFILE_S3_REGION-us-east-1}
+      ZEFILE_S3_BUCKET: ${ZEFILE_S3_BUCKET-my-bucket}
+      ZEFILE_S3_PREFIX: ${ZEFILE_S3_PREFIX-zefile-dev}
+      ZEFILE_S3_ACCESS_KEY_ID: ${ZEFILE_S3_ACCESS_KEY_ID-admin}
+      ZEFILE_S3_SECRET_ACCESS_KEY: ${ZEFILE_S3_SECRET_ACCESS_KEY-secret}
+      ZEFILE_S3_FORCE_PATH_STYLE: ${ZEFILE_S3_FORCE_PATH_STYLE-true}
+      ZEFILE_S3_PUBLIC_ENDPOINT: ${ZEFILE_S3_PUBLIC_ENDPOINT-http://localhost:8334}
+      ZEFILE_DATA_DIR: /data
+      ZEFILE_CONFIG_DIR: /config
+    volumes:
+      # In S3 mode /data is unused
+      # - ./data:/data
+      - zefile-config:/config
+    ports:
+      - "8080:8080"
+
+volumes:
+  weed-data:
+  zefile-config:

@@ -31,6 +31,58 @@ trivially forged, and trusting it without knowing the proxy in front would let
 anyone reset their own rate limit. If you need accurate client IPs in the audit
 log, this is a known trade-off favouring safety.
 
+## Object storage (S3 / Backblaze B2)
+
+In S3 mode (`ZEFILE_STORAGE_BACKEND: s3`) the browser talks to the bucket
+directly: part uploads are `PUT`s and downloads/previews are `GET`s against
+presigned URLs. Deletes never touch the bucket from the browser — they go
+through the server API. So the bucket needs a CORS rule covering exactly that:
+`GET` + `PUT` + `HEAD` from the app origin.
+
+The repository ships the rule as B2-native JSON in `deploy/b2-cors.json`:
+
+```json
+[
+  {
+    "corsRuleName": "zefile-dev",
+    "allowedHeaders": ["*"],
+    "allowedOperations": ["s3_get", "s3_put", "s3_head"],
+    "allowedOrigins": ["http://localhost:8080"],
+    "exposeHeaders": ["ETag", "Content-Length", "Content-Range", "Accept-Ranges"],
+    "maxAgeSeconds": 3600
+  }
+]
+```
+
+Why it looks like this:
+
+- `s3_put` covers part uploads; `s3_get` + `s3_head` cover downloads, ranged
+  previews, and metadata checks.
+- The origin is the app origin as the browser sees it. The shipped file targets
+  local dev (`http://localhost:8080`) — add your production origin (e.g.
+  `https://zefile.example.tld`) when you deploy.
+- `allowedHeaders: ["*"]` because part `PUT`s carry the file's `Content-Type`
+  and previews send `Range`; enumerating every content type is brittle.
+- `exposeHeaders` keeps `ETag` and the range headers readable to JavaScript.
+
+Apply it with the Backblaze CLI (`bbb2` here — the `b2` name belongs to an
+unrelated build tool on some systems):
+
+```sh
+# Authorize once; afterwards the session is cached.
+bbb2 account authorize <applicationKeyId> <applicationKey>
+
+# bucketType is positional and required — repeat the bucket's current type
+# (allPrivate) so the update preserves it.
+bbb2 bucket update --cors-rules "$(<deploy/b2-cors.json)" <bucketName> allPrivate
+```
+
+Verify:
+
+```sh
+bbb2 bucket get <bucketName>
+```
+
 ## Backups
 
 Back up two things separately: your **data directory** (the files — use your

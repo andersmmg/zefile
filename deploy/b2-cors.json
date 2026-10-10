@@ -1,0 +1,10 @@
+[
+  {
+    "corsRuleName": "zefile-dev",
+    "allowedHeaders": ["*"],
+    "allowedOperations": ["s3_get", "s3_put", "s3_head"],
+    "allowedOrigins": ["http://localhost:8080"],
+    "exposeHeaders": ["ETag", "Content-Length", "Content-Range", "Accept-Ranges"],
+    "maxAgeSeconds": 3600
+  }
+]

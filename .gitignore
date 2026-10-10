@@ -25,3 +25,6 @@
 .DS_Store
 .idea/
 .vscode/
+
+# Dev-stack secrets (B2 keys for docker-compose.dev.yml)
+deploy/.env

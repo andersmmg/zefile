@@ -43,7 +43,8 @@ type Config struct {
 	Dir string
 
 	// StorageRoot, when set, is checked to make sure the database does not sit
-	// inside the browsable tree. Leave empty only in tests.
+	// inside the browsable tree. Leave empty in tests and in S3 mode, where
+	// there is no browsable local tree.
 	StorageRoot string
 
 	// MaxReaders caps concurrent read connections. Zero picks a sensible

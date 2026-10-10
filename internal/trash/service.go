@@ -33,14 +33,14 @@ type Item struct {
 
 // Service manages the trash.
 type Service struct {
-	fs     *storage.Local
+	fs     storage.Trasher
 	reads  *sqlcgen.Queries
 	writes *sqlcgen.Queries
 	now    func() time.Time
 }
 
 // New builds a Service over the given database and storage.
-func New(database *db.DB, fs *storage.Local) *Service {
+func New(database *db.DB, fs storage.Trasher) *Service {
 	return &Service{
 		fs:     fs,
 		reads:  sqlcgen.New(database.Read),

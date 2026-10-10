@@ -192,6 +192,8 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("POST /api/v1/uploads", s.handleUploadCreate)
 	authed.HandleFunc("HEAD /api/v1/uploads/{token}", s.handleUploadOffset)
 	authed.HandleFunc("PATCH /api/v1/uploads/{token}", s.handleUploadWrite)
+	authed.HandleFunc("POST /api/v1/uploads/{token}/parts", s.handleUploadParts)
+	authed.HandleFunc("POST /api/v1/uploads/{token}/complete", s.handleUploadComplete)
 	authed.HandleFunc("DELETE /api/v1/uploads/{token}", s.handleUploadCancel)
 
 	// The interface is served from the root, so anything the API does not claim

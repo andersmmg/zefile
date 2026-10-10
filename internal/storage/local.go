@@ -113,28 +113,9 @@ func (l *Local) Stat(ctx context.Context, p Path) (FileInfo, error) {
 
 // List implements [FS].
 func (l *Local) List(ctx context.Context, p Path) ([]FileInfo, error) {
-	// The reserved check comes first, as in access: a caller must not learn that
-	// a reserved path exists by observing which error comes back.
-	if isReserved(p) {
-		return nil, ErrReserved
-	}
-
-	// A ListGuard lets someone list a directory that only leads to what they were
-	// granted; without one, listing needs plain read on the directory.
-	lister, traverse := l.guard.(ListGuard)
-	if traverse {
-		ok, err := lister.CanList(ctx, p)
-		if err != nil {
-			return nil, fmt.Errorf("storage: authorisation failed: %w", err)
-		}
-		if !ok {
-			return nil, ErrPermission
-		}
-	} else if err := l.guard.Authorize(ctx, OpRead, p); err != nil {
-		if errors.Is(err, ErrPermission) {
-			return nil, ErrPermission
-		}
-		return nil, fmt.Errorf("storage: authorisation failed: %w", err)
+	traverse, err := authorizeList(ctx, l.guard, p)
+	if err != nil {
+		return nil, err
 	}
 
 	rel, info, err := l.resolveExisting(p)
@@ -151,9 +132,9 @@ func (l *Local) List(ctx context.Context, p Path) ([]FileInfo, error) {
 	}
 
 	if traverse {
-		return l.filterVisible(ctx, lister, candidates)
+		return filterVisible(ctx, l.guard.(ListGuard), candidates)
 	}
-	return l.filterReadable(ctx, candidates)
+	return filterReadable(ctx, l.guard, candidates)
 }
 
 // readDir reads a directory's entries into FileInfos, dropping reserved names at
@@ -189,72 +170,7 @@ func (l *Local) readDir(p Path, rel string) ([]FileInfo, error) {
 		candidates = append(candidates, toFileInfo(child, entryInfo))
 	}
 	return candidates, nil
-}
-
-// filterVisible keeps the entries a ListGuard says the caller may see: those
-// readable, plus directories that lead to something readable.
-func (l *Local) filterVisible(ctx context.Context, lister ListGuard, entries []FileInfo) ([]FileInfo, error) {
-	if len(entries) == 0 {
-		return entries, nil
-	}
-	paths := make([]Path, len(entries))
-	for i, entry := range entries {
-		paths[i] = entry.Path
-	}
-
-	verdicts, err := lister.VisibleChildren(ctx, paths)
-	if err != nil {
-		return nil, fmt.Errorf("storage: authorisation failed: %w", err)
-	}
-	if len(verdicts) != len(entries) {
-		return nil, fmt.Errorf("storage: guard returned %d verdicts for %d paths", len(verdicts), len(entries))
-	}
-
-	visible := entries[:0]
-	for i, ok := range verdicts {
-		if ok {
-			visible = append(visible, entries[i])
-		}
-	}
-	return visible, nil
-}
-
-// filterReadable drops entries the caller may not see.
-//
-// Without this, a listing reveals the names of everything in a directory even
-// where a rule denies access to some of it — and a filename is often the whole
-// secret. The verdicts are fetched in one batch: a directory can hold tens of
-// thousands of entries, and a query each would make listing unusable.
-func (l *Local) filterReadable(ctx context.Context, entries []FileInfo) ([]FileInfo, error) {
-	if len(entries) == 0 {
-		return entries, nil
-	}
-
-	paths := make([]Path, len(entries))
-	for i, entry := range entries {
-		paths[i] = entry.Path
-	}
-
-	verdicts, err := l.guard.Permitted(ctx, OpRead, paths)
-	if err != nil {
-		return nil, fmt.Errorf("storage: authorisation failed: %w", err)
-	}
-	if len(verdicts) != len(entries) {
-		// A Guard returning a mismatched result cannot be interpreted, and
-		// guessing would mean either leaking entries or hiding legitimate ones.
-		return nil, fmt.Errorf("storage: guard returned %d verdicts for %d paths", len(verdicts), len(entries))
-	}
-
-	visible := entries[:0]
-	for i, ok := range verdicts {
-		if ok {
-			visible = append(visible, entries[i])
-		}
-	}
-	return visible, nil
-}
-
-// Open implements [FS].
+} // Open implements [FS].
 func (l *Local) Open(ctx context.Context, p Path) (File, error) {
 	if err := l.access(ctx, OpRead, p); err != nil {
 		return nil, err
@@ -407,21 +323,9 @@ func (l *Local) RemoveAll(ctx context.Context, p Path) error {
 
 // ---------------------------------------------------------------------- gates
 
-// access runs the reserved-name check and the Guard, in that order: a caller
-// must not learn whether a reserved path exists by observing which error comes
-// back first.
+// access runs the reserved-name check and this backend's Guard.
 func (l *Local) access(ctx context.Context, op Op, p Path) error {
-	if isReserved(p) {
-		return ErrReserved
-	}
-	if err := l.guard.Authorize(ctx, op, p); err != nil {
-		if errors.Is(err, ErrPermission) {
-			return ErrPermission
-		}
-		// A Guard that failed to decide must not fall open.
-		return fmt.Errorf("storage: authorisation failed: %w", err)
-	}
-	return nil
+	return authorize(ctx, l.guard, op, p)
 }
 
 // checkWritable refuses operations that consume space.

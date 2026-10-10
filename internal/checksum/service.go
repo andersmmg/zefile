@@ -45,12 +45,12 @@ type Checksum struct {
 type Service struct {
 	reads  *sqlcgen.Queries
 	writes *sqlcgen.Queries
-	fs     *storage.Local
+	fs     storage.FS
 	now    func() time.Time
 }
 
 // New builds a Service over the database and storage.
-func New(database *db.DB, fs *storage.Local) *Service {
+func New(database *db.DB, fs storage.FS) *Service {
 	return &Service{
 		reads:  sqlcgen.New(database.Read),
 		writes: sqlcgen.New(database.Write),

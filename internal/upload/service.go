@@ -57,6 +57,15 @@ var (
 
 	// ErrTooLarge means the declared length exceeds what the instance accepts.
 	ErrTooLarge = errors.New("upload: declared length is too large")
+
+	// ErrWrongMode means bytes reached the server for a direct session.
+	ErrWrongMode = errors.New("upload: session is direct; send parts to storage, not here")
+)
+
+// Transfer modes a session may run in.
+const (
+	ModeTus    = "tus"
+	ModeDirect = "direct"
 )
 
 // Session is an upload in progress.
@@ -67,15 +76,27 @@ type Session struct {
 	Offset    int64
 	ExpiresAt time.Time
 	Complete  bool
+	Mode      string
+	PartSize  int64
+}
+
+// Store is the slice of a storage backend this service needs:
+// [storage.Stager] plus Stat.
+type Store interface {
+	storage.Stager
+	Stat(ctx context.Context, p storage.Path) (storage.FileInfo, error)
 }
 
 // Service manages upload sessions.
 type Service struct {
-	fs     *storage.Local
+	fs     Store
 	reads  *sqlcgen.Queries
 	writes *sqlcgen.Queries
 	ttl    time.Duration
 	now    func() time.Time
+
+	direct   storage.DirectStager
+	partSize int64
 
 	// Concurrent PATCHes against one session would interleave writes and
 	// produce a file that is the wrong length in an unpredictable way. tus
@@ -94,8 +115,20 @@ func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = 
 // WithTTL sets how long an untouched session survives.
 func WithTTL(d time.Duration) Option { return func(s *Service) { s.ttl = d } }
 
+// WithDirect switches the service to direct mode. A non-positive partSize
+// falls back to the storage default.
+func WithDirect(d storage.DirectStager, partSize int64) Option {
+	return func(s *Service) {
+		s.direct = d
+		s.partSize = partSize
+		if s.partSize <= 0 {
+			s.partSize = storage.DefaultPartSize
+		}
+	}
+}
+
 // New builds a Service.
-func New(database *db.DB, fs *storage.Local, opts ...Option) *Service {
+func New(database *db.DB, fs Store, opts ...Option) *Service {
 	s := &Service{
 		fs:     fs,
 		reads:  sqlcgen.New(database.Read),
@@ -118,6 +151,9 @@ func New(database *db.DB, fs *storage.Local, opts ...Option) *Service {
 func (s *Service) Create(ctx context.Context, userID int64, target storage.Path, size int64, checksum string) (Session, error) {
 	if size < 0 || size > MaxUploadSize {
 		return Session{}, ErrTooLarge
+	}
+	if s.direct != nil {
+		return s.createDirect(ctx, userID, target, size, checksum)
 	}
 	if _, err := s.fs.Stat(ctx, target); err == nil {
 		return Session{}, storage.ErrExist
@@ -152,7 +188,46 @@ func (s *Service) Create(ctx context.Context, userID int64, target storage.Path,
 		return Session{}, fmt.Errorf("upload: create session: %w", err)
 	}
 
-	return s.toSession(row, 0), nil
+	session := s.toSession(row, 0)
+	s.fillMode(row, &session)
+	return session, nil
+}
+
+// createDirect opens a direct session. The declared checksum is recorded
+// but never verified: verifying would mean reading bytes direct mode
+// never sees.
+func (s *Service) createDirect(ctx context.Context, userID int64, target storage.Path, size int64, checksum string) (Session, error) {
+	handle, err := s.direct.BeginUpload(ctx, target, size)
+	if err != nil {
+		return Session{}, err
+	}
+
+	token, _, err := auth.NewToken("zefile_up_")
+	if err != nil {
+		_ = s.direct.AbortUpload(ctx, handle)
+		return Session{}, err
+	}
+
+	now := s.now()
+	row, err := s.writes.CreateUpload(ctx, sqlcgen.CreateUploadParams{
+		Token:      token,
+		UserID:     userID,
+		TargetPath: target.String(),
+		Size:       size,
+		StageID:    handle.ID,
+		Checksum:   nullableString(checksum),
+		CreatedAt:  now.Unix(),
+		ExpiresAt:  now.Add(s.ttl).Unix(),
+	})
+	if err != nil {
+		_ = s.direct.AbortUpload(ctx, handle)
+		return Session{}, fmt.Errorf("upload: create session: %w", err)
+	}
+
+	session := s.toSession(row, 0)
+	session.Mode = ModeDirect
+	session.PartSize = handle.PartSize
+	return session, nil
 }
 
 // Offset reports how many bytes the server holds, which is where a client
@@ -166,6 +241,18 @@ func (s *Service) Offset(ctx context.Context, token string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
+	if s.direct != nil {
+		committed, err := s.direct.CommittedBytes(ctx, s.directHandle(row))
+		if err != nil {
+			if errors.Is(err, storage.ErrNotExist) {
+				return Session{}, ErrNotFound
+			}
+			return Session{}, err
+		}
+		session := s.toSession(row, committed)
+		s.fillMode(row, &session)
+		return session, nil
+	}
 	stage := storage.StageID(row.StageID)
 
 	offset, err := s.fs.StageSize(ctx, stage)
@@ -175,7 +262,97 @@ func (s *Service) Offset(ctx context.Context, token string) (Session, error) {
 		}
 		return Session{}, err
 	}
-	return s.toSession(row, offset), nil
+	session := s.toSession(row, offset)
+	s.fillMode(row, &session)
+	return session, nil
+}
+
+// MaxPartURLsPerRequest bounds one presigned-URL batch.
+const MaxPartURLsPerRequest = 100
+
+// PartURLs mints capability URLs for the requested 1-based part numbers
+// of a direct session.
+func (s *Service) PartURLs(ctx context.Context, token string, partNumbers []int) ([]storage.PartURL, error) {
+	if s.direct == nil {
+		return nil, ErrWrongMode
+	}
+	row, err := s.load(ctx, token)
+	if err != nil {
+		return nil, err
+	}
+	if len(partNumbers) == 0 || len(partNumbers) > MaxPartURLsPerRequest {
+		return nil, fmt.Errorf("upload: ask for between 1 and %d part URLs at once", MaxPartURLsPerRequest)
+	}
+	urls, err := s.direct.PresignParts(ctx, s.directHandle(row), partNumbers)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotExist) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return urls, nil
+}
+
+// Complete publishes a direct session once storage holds every declared
+// byte. The count comes from the backend, not the client.
+func (s *Service) Complete(ctx context.Context, token string) (Session, error) {
+	if s.direct == nil {
+		return Session{}, ErrWrongMode
+	}
+	unlock := s.lock(token)
+	defer unlock()
+
+	row, err := s.load(ctx, token)
+	if err != nil {
+		return Session{}, err
+	}
+	handle := s.directHandle(row)
+	committed, err := s.direct.CommittedBytes(ctx, handle)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotExist) {
+			return Session{}, ErrNotFound
+		}
+		return Session{}, err
+	}
+	if committed != row.Size {
+		return Session{}, fmt.Errorf("%w: storage holds %d of %d bytes", ErrSizeMismatch, committed, row.Size)
+	}
+
+	target, err := storage.ParsePath(row.TargetPath)
+	if err != nil {
+		return Session{}, err
+	}
+	if err := s.direct.CompleteUpload(ctx, handle, target); err != nil {
+		if errors.Is(err, storage.ErrNotExist) {
+			return Session{}, ErrNotFound
+		}
+		return Session{}, err
+	}
+	if err := s.writes.DeleteUpload(ctx, row.ID); err != nil {
+		return Session{}, fmt.Errorf("upload: close session: %w", err)
+	}
+	session := s.toSession(row, committed)
+	s.fillMode(row, &session)
+	session.Complete = true
+	return session, nil
+}
+
+// directHandle rebuilds the backend handle from the session row.
+func (s *Service) directHandle(row sqlcgen.Upload) storage.UploadHandle {
+	return storage.UploadHandle{
+		ID:       row.StageID,
+		PartSize: storage.PartSizeFor(s.partSize, row.Size),
+	}
+}
+
+// fillMode stamps the transfer mode (and part size) onto a session.
+func (s *Service) fillMode(row sqlcgen.Upload, session *Session) {
+	if s.direct != nil {
+		session.Mode = ModeDirect
+		session.PartSize = storage.PartSizeFor(s.partSize, row.Size)
+	} else {
+		session.Mode = ModeTus
+	}
 }
 
 // Write appends bytes at the given offset, committing the file once the
@@ -187,6 +364,9 @@ func (s *Service) Write(ctx context.Context, token string, offset int64, body io
 	row, err := s.load(ctx, token)
 	if err != nil {
 		return Session{}, err
+	}
+	if s.direct != nil {
+		return Session{}, ErrWrongMode
 	}
 	stage, declared := storage.StageID(row.StageID), row.Checksum.String
 
@@ -215,11 +395,15 @@ func (s *Service) Write(ctx context.Context, token string, offset int64, body io
 	if writeErr != nil {
 		// The bytes that landed are kept. That is the entire point: the client
 		// asks for the offset again and continues.
-		return s.toSession(row, written), writeErr
+		session := s.toSession(row, written)
+		s.fillMode(row, &session)
+		return session, writeErr
 	}
 
 	if written < row.Size {
-		return s.toSession(row, written), nil
+		session := s.toSession(row, written)
+		s.fillMode(row, &session)
+		return session, nil
 	}
 	if written > row.Size {
 		return Session{}, ErrSizeMismatch
@@ -229,6 +413,7 @@ func (s *Service) Write(ctx context.Context, token string, offset int64, body io
 		return Session{}, err
 	}
 	session := s.toSession(row, written)
+	s.fillMode(row, &session)
 	session.Complete = true
 	return session, nil
 }
@@ -288,7 +473,11 @@ func (s *Service) Cancel(ctx context.Context, token string) error {
 		return err
 	}
 
-	_ = s.fs.DiscardStage(ctx, storage.StageID(row.StageID))
+	if s.direct != nil {
+		_ = s.direct.AbortUpload(ctx, s.directHandle(row))
+	} else {
+		_ = s.fs.DiscardStage(ctx, storage.StageID(row.StageID))
+	}
 	return s.writes.DeleteUpload(ctx, row.ID)
 }
 
@@ -299,14 +488,21 @@ func (s *Service) PurgeExpired(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("upload: list expired: %w", err)
 	}
 	for _, row := range rows {
-		_ = s.fs.DiscardStage(ctx, storage.StageID(row.StageID))
+		if s.direct != nil {
+			_ = s.direct.AbortUpload(ctx, s.directHandle(row))
+		} else {
+			_ = s.fs.DiscardStage(ctx, storage.StageID(row.StageID))
+		}
 		_ = s.writes.DeleteUpload(ctx, row.ID)
 	}
 
-	// Also sweep staged files with no session at all, which is what a crash
-	// between creating the file and inserting its row leaves behind.
+	// Also sweep staged files with no session at all (crash orphans).
+	// Provider-side leftovers are reaped by the bucket lifecycle rule.
 	orphans, err := s.fs.PurgeStagesOlderThan(ctx, s.now().Add(-2*s.ttl))
 	if err != nil {
+		if errors.Is(err, storage.ErrNotSupported) {
+			return len(rows), nil
+		}
 		return len(rows), err
 	}
 	return len(rows) + orphans, nil

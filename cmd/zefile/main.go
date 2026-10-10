@@ -124,7 +124,7 @@ func runRestore(src string) error {
 		return fmt.Errorf("%s is not set", config.EnvConfigDir)
 	}
 
-	report, err := db.RestoreFrom(context.Background(), dir, os.Getenv(config.EnvDataDir), src)
+	report, err := db.RestoreFrom(context.Background(), dir, restoreDataDir(), src)
 	if err != nil {
 		return err
 	}
@@ -165,12 +165,31 @@ func run() error {
 	defer func() { _ = database.Close() }()
 
 	engine := acl.New(database)
-	fs, err := storage.Open(storage.Config{
-		Root:     cfg.DataDir,
-		Guard:    engine,
-		Reserve:  cfg.Reserve,
-		ReadOnly: cfg.ReadOnly,
-	})
+	var fs storage.FS
+	switch cfg.Backend {
+	case config.BackendS3:
+		fs, err = storage.OpenS3(storage.S3Config{
+			Endpoint:        cfg.S3.Endpoint,
+			Region:          cfg.S3.Region,
+			Bucket:          cfg.S3.Bucket,
+			Prefix:          cfg.S3.Prefix,
+			AccessKeyID:     cfg.S3.AccessKeyID,
+			SecretAccessKey: cfg.S3.SecretAccessKey,
+			ForcePathStyle:  cfg.S3.ForcePathStyle,
+			PublicEndpoint:  cfg.S3.PublicEndpoint,
+			PartSize:        cfg.S3.PartSize,
+			PresignTTL:      cfg.S3.PresignTTL,
+			Guard:           engine,
+			ReadOnly:        cfg.ReadOnly,
+		})
+	default:
+		fs, err = storage.Open(storage.Config{
+			Root:     cfg.DataDir,
+			Guard:    engine,
+			Reserve:  cfg.Reserve,
+			ReadOnly: cfg.ReadOnly,
+		})
+	}
 	if err != nil {
 		return err
 	}
@@ -186,8 +205,12 @@ func run() error {
 	}
 	warnAboutSingleOrigin(cfg)
 
-	uploads := upload.New(database, fs)
-	trashService := trash.New(database, fs)
+	var uploadOpts []upload.Option
+	if d, ok := fs.(storage.DirectStager); ok {
+		uploadOpts = append(uploadOpts, upload.WithDirect(d, cfg.S3.PartSize))
+	}
+	uploads := upload.New(database, asUploadStore(fs), uploadOpts...)
+	trashService := trash.New(database, storage.AsTrasher(fs))
 	auditLog := audit.New(database)
 	checksums := checksum.New(database, fs)
 	settingsSvc := settings.New(database)
@@ -214,10 +237,10 @@ func run() error {
 	// inside serve so that a job in flight is cancelled when the process is
 	// asked to stop, and requeued on the next start.
 	jobs := job.New(database)
-	jobs.Register(job.TypeCopy, copyJobHandler(fs, engine))
+	jobs.Register(job.TypeCopy, copyJobHandler(storage.AsTreeCopier(fs), engine))
 	jobs.Register(job.TypeChecksum, checksumJobHandler(checksums, engine))
-	jobs.Register(job.TypeExtract, extractJobHandler(fs, engine))
-	jobs.Register(job.TypeFetch, fetchJobHandler(fs, engine, fetch.New(fetch.DefaultPolicy())))
+	jobs.Register(job.TypeExtract, extractJobHandler(storage.AsExtractor(fs), engine))
+	jobs.Register(job.TypeFetch, fetchJobHandler(asFetchBackend(fs), engine, fetch.New(fetch.DefaultPolicy())))
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	defer stopWorker()
 	go jobs.Run(workerCtx)
@@ -249,6 +272,7 @@ func run() error {
 		Subject:      acl.NewSubjectLoader(database, engine),
 		Shares:       shareService,
 		SingleOrigin: cfg.SingleOrigin(),
+		PresignTTL:   cfg.S3.PresignTTL,
 	}).Handler()
 
 	server := &http.Server{
@@ -263,12 +287,43 @@ func run() error {
 	return serve(server, cfg)
 }
 
+// asUploadStore adapts a backend to what the upload service needs.
+func asUploadStore(fs storage.FS) upload.Store {
+	return struct {
+		storage.FS
+		storage.Stager
+	}{fs, storage.AsStager(fs)}
+}
+
+// fetchBackend is what the fetch job needs from a backend.
+type fetchBackend interface {
+	storage.Stager
+	Space(ctx context.Context) (storage.SpaceInfo, error)
+}
+
+func asFetchBackend(fs storage.FS) fetchBackend {
+	return struct {
+		storage.FS
+		storage.Stager
+	}{fs, storage.AsStager(fs)}
+}
+
+// restoreDataDir is the local tree a restore checks divergence against:
+// empty in S3 mode, where no local tree exists.
+func restoreDataDir() string {
+	backend, err := config.StorageBackend()
+	if err != nil || backend != config.BackendLocal {
+		return ""
+	}
+	return os.Getenv(config.EnvDataDir)
+}
+
 // copyJobHandler runs a background copy: it recreates the caller's authority
 // from the payload, copies the tree, and records ownership of the result. It is
 // safe to retry — CopyTree refuses to overwrite an existing destination, so a
 // job that already finished before a crash simply fails the second time and is
 // marked failed rather than duplicating anything.
-func copyJobHandler(fs *storage.Local, engine *acl.Engine) job.Handler {
+func copyJobHandler(fs storage.TreeCopier, engine *acl.Engine) job.Handler {
 	return func(ctx context.Context, payload string, report func(done, total int64)) error {
 		var p job.CopyPayload
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
@@ -301,7 +356,7 @@ func copyJobHandler(fs *storage.Local, engine *acl.Engine) job.Handler {
 // records ownership of the result. It is safe to retry — ExtractZip refuses to
 // overwrite an existing destination, so a job that already finished before a
 // crash simply fails the second time rather than doubling anything.
-func extractJobHandler(fs *storage.Local, engine *acl.Engine) job.Handler {
+func extractJobHandler(fs storage.Extractor, engine *acl.Engine) job.Handler {
 	return func(ctx context.Context, payload string, report func(done, total int64)) error {
 		var p job.ExtractPayload
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
@@ -343,7 +398,13 @@ func extractJobHandler(fs *storage.Local, engine *acl.Engine) job.Handler {
 // offset with a ranged request; if the source does not honour the range, the
 // partial is discarded and the download restarts cleanly. Pause keeps the
 // stage, cancel discards it, and a crash mid-download resumes on the next start.
-func fetchJobHandler(fs *storage.Local, engine *acl.Engine, fetcher *fetch.Fetcher) job.Handler {
+
+type fetchStore interface {
+	storage.Stager
+	Space(ctx context.Context) (storage.SpaceInfo, error)
+}
+
+func fetchJobHandler(fs fetchStore, engine *acl.Engine, fetcher *fetch.Fetcher) job.Handler {
 	return func(ctx context.Context, payload string, report func(done, total int64)) error {
 		var p job.FetchPayload
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {

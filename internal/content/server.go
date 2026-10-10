@@ -14,6 +14,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
@@ -31,10 +32,11 @@ type SubjectLoader interface {
 
 // Server handles requests on the content origin.
 type Server struct {
-	fs      storage.FS
-	signer  *Signer
-	subject SubjectLoader
-	shares  share.Resolver
+	fs         storage.FS
+	signer     *Signer
+	subject    SubjectLoader
+	shares     share.Resolver
+	presignTTL time.Duration
 
 	// singleOrigin hardens every response when the instance serves content from
 	// the application origin. See [Options].
@@ -55,11 +57,15 @@ type Options struct {
 	// render — an HTML page, an SVG — cannot execute in the origin that holds
 	// the session.
 	SingleOrigin bool
+
+	// PresignTTL bounds download URLs minted when the backend serves files
+	// straight from storage. Zero means the backend default.
+	PresignTTL time.Duration
 }
 
 // New builds the content-origin handler.
 func New(opts Options) *Server {
-	return &Server{fs: opts.FS, signer: opts.Signer, subject: opts.Subject, shares: opts.Shares, singleOrigin: opts.SingleOrigin}
+	return &Server{fs: opts.FS, signer: opts.Signer, subject: opts.Subject, shares: opts.Shares, singleOrigin: opts.SingleOrigin, presignTTL: opts.PresignTTL}
 }
 
 // Handler returns the routed handler.
@@ -103,17 +109,28 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ?download=1 forces an attachment; it rides in the query, outside the
+	// signed token, so it changes nothing about access.
+	forceDownload := r.URL.Query().Get("download") == "1"
+
+	// A backend serving files straight from storage answers with a
+	// redirect to a short-lived capability URL instead of streaming.
+	if ps, ok := s.fs.(storage.Presigner); ok {
+		url, err := ps.PresignGet(ctx, p, r.Method == http.MethodHead, s.presignTTL, s.disposition(p, forceDownload))
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		http.Redirect(w, r, url, http.StatusFound)
+		return
+	}
+
 	file, info, err := s.open(ctx, p)
 	if err != nil {
 		s.writeError(w, r, err)
 		return
 	}
 	defer file.Close()
-
-	// ?download=1 forces an attachment, so the same signed link serves a preview
-	// inline and a real download when the interface asks for one. The flag rides
-	// in the query, not the signed token, so it changes nothing about access.
-	forceDownload := r.URL.Query().Get("download") == "1"
 	s.setHeaders(w, p, info.Size, forceDownload)
 
 	// ServeContent handles conditional requests and the whole of RFC 9110's
@@ -310,6 +327,21 @@ func (s *Server) handleShare(w http.ResponseWriter, r *http.Request) {
 
 // serveShareFile streams one file of a share, counting the download.
 func (s *Server) serveShareFile(w http.ResponseWriter, r *http.Request, ctx context.Context, shareID int64, p storage.Path) {
+	// A HEAD is a client checking, not a download.
+	if r.Method != http.MethodHead {
+		_ = s.shares.RecordDownload(ctx, shareID, clientIP(r), r.UserAgent())
+	}
+
+	if ps, ok := s.fs.(storage.Presigner); ok {
+		url, err := ps.PresignGet(ctx, p, r.Method == http.MethodHead, s.presignTTL, s.disposition(p, r.URL.Query().Get("download") == "1"))
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		http.Redirect(w, r, url, http.StatusFound)
+		return
+	}
+
 	file, info, err := s.open(ctx, p)
 	if err != nil {
 		s.writeError(w, r, err)
@@ -317,14 +349,22 @@ func (s *Server) serveShareFile(w http.ResponseWriter, r *http.Request, ctx cont
 	}
 	defer file.Close()
 
-	// Count and log the download, but never let a bookkeeping failure deny a
-	// legitimate one. A HEAD is a client checking, not a download.
-	if r.Method != http.MethodHead {
-		_ = s.shares.RecordDownload(ctx, shareID, clientIP(r), r.UserAgent())
-	}
-
 	s.setHeaders(w, p, info.Size, r.URL.Query().Get("download") == "1")
 	http.ServeContent(w, r.WithContext(ctx), p.Name(), info.ModTime, file)
+}
+
+// disposition is the Content-Disposition a download carries: inline for
+// types the browser isolates, attachment otherwise or when forced.
+func (s *Server) disposition(p storage.Path, forceDownload bool) string {
+	contentType := mime.TypeByExtension(strings.ToLower(path.Ext(p.Name())))
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	kind := "attachment"
+	if !forceDownload && s.inlineAllowed(contentType) {
+		kind = "inline"
+	}
+	return kind + "; filename*=UTF-8''" + encodeFilename(p.Name())
 }
 
 // serveShareBrowse renders the public listing of a shared folder.
@@ -630,7 +670,7 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, err error) {
 		return // The client hung up; there is nobody to answer.
 	case errors.Is(err, storage.ErrNotExist), errors.Is(err, storage.ErrPermission),
 		errors.Is(err, storage.ErrReserved), errors.Is(err, storage.ErrIsDir),
-		errors.Is(err, ErrUnknownSubject):
+		errors.Is(err, storage.ErrNotSupported), errors.Is(err, ErrUnknownSubject):
 		// A link that resolves to something unreadable answers the same way as
 		// a forged one. The holder of a link proved nothing about who they are,
 		// so they learn nothing about what is there.

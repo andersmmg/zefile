@@ -60,6 +60,7 @@ const (
 	CodeInvalidSetupToken  = "invalid_setup_token"
 	CodeInvalidInvitation  = "invalid_invitation"
 	CodeAmbiguous          = "ambiguous_name"
+	CodeNotSupported       = "not_supported"
 	CodeBadArchive         = "bad_archive"
 	CodeArchiveTooLarge    = "archive_too_large"
 	CodeInternal           = "internal_error"
@@ -171,6 +172,10 @@ func writeError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, storage.ErrNoSpace):
 		writeProblem(w, r, http.StatusInsufficientStorage, CodeNoSpace,
 			"Out of space", "Free space is below the reserve, so writes are refused. Reads and deletions still work.")
+
+	case errors.Is(err, storage.ErrNotSupported):
+		writeProblem(w, r, http.StatusNotImplemented, CodeNotSupported,
+			"Not supported", "The storage backend for this instance does not support this operation.")
 
 	case errors.Is(err, storage.ErrInvalidPath):
 		writeProblem(w, r, http.StatusBadRequest, CodeInvalidPath,

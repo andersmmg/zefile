@@ -105,9 +105,11 @@ type FS interface {
 	// [MaxSyncCopyBytes] are refused: both need the background job queue.
 	Copy(ctx context.Context, from, to Path) error
 
-	// Move renames an entry. It never falls back to copying: a move that would
-	// cross a filesystem boundary returns [ErrCrossDevice] rather than silently
-	// turning an instant operation into a multi-gigabyte copy.
+	// Move renames an entry. On a local filesystem it never falls back to
+	// copying: a cross-device move returns [ErrCrossDevice]. Backends
+	// without a rename primitive copy then delete instead: not atomic, and
+	// the destination must not already exist. May be a better way to handle
+	// this in the future.
 	Move(ctx context.Context, from, to Path) error
 
 	// Remove deletes a file or an empty directory.

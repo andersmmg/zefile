@@ -48,6 +48,9 @@ var (
 	// rather than rename within one. Relevant for trash and uploads, which must
 	// live on the same filesystem as the data to stay instantaneous.
 	ErrCrossDevice = errors.New("storage: cross-device operation")
+
+	// ErrNotSupported means the backend lacks the capability asked for.
+	ErrNotSupported = errors.New("storage: not supported by this backend")
 )
 
 // ErrBadArchive means an archive could not be read as a valid ZIP, or an entry
