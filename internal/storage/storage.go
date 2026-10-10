@@ -17,6 +17,7 @@ import (
 const (
 	TrashDir   = ".zefile-trash"
 	UploadsDir = ".zefile-uploads"
+	ThumbsDir  = ".zefile-thumbs"
 )
 
 // DefaultReserve is the free space kept in hand by default.

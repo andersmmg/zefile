@@ -26,6 +26,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv(EnvS3SecretAccessKey, "")
 	t.Setenv(EnvS3ForcePathStyle, "")
 	t.Setenv(EnvPreviewMaxBytes, "")
+	t.Setenv(EnvThumbMaxBytes, "")
 }
 
 func TestBackendDefaultsToLocal(t *testing.T) {
@@ -141,6 +142,28 @@ func TestPreviewMaxBytes(t *testing.T) {
 	t.Setenv(EnvPreviewMaxBytes, "zero")
 	if _, err := Load(); err == nil || !strings.Contains(err.Error(), EnvPreviewMaxBytes) {
 		t.Fatalf("Load with a bad size = %v, want an %s error", err, EnvPreviewMaxBytes)
+	}
+}
+
+func TestThumbMaxBytes(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv(EnvDataDir, t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ThumbMaxBytes != DefaultThumbMaxBytes {
+		t.Errorf("ThumbMaxBytes = %d, want default %d", cfg.ThumbMaxBytes, DefaultThumbMaxBytes)
+	}
+
+	t.Setenv(EnvThumbMaxBytes, "1GiB")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ThumbMaxBytes != 1<<30 {
+		t.Errorf("ThumbMaxBytes = %d, want %d", cfg.ThumbMaxBytes, 1<<30)
 	}
 }
 

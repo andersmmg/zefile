@@ -32,6 +32,7 @@ import (
 	"github.com/krishna2206/zefile/internal/settings"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
+	"github.com/krishna2206/zefile/internal/thumb"
 	"github.com/krishna2206/zefile/internal/trash"
 	"github.com/krishna2206/zefile/internal/upload"
 )
@@ -241,6 +242,14 @@ func run() error {
 	jobs.Register(job.TypeChecksum, checksumJobHandler(checksums, engine))
 	jobs.Register(job.TypeExtract, extractJobHandler(storage.AsExtractor(fs), engine))
 	jobs.Register(job.TypeFetch, fetchJobHandler(asFetchBackend(fs), engine, fetch.New(fetch.DefaultPolicy())))
+
+	// Thumbnails grow in the background from eligible uploads and tile
+	// views. Backends without a thumb store skip the service entirely.
+	var thumbs *thumb.Service
+	if store, ok := fs.(storage.ThumbStore); ok {
+		thumbs = thumb.New(fs, store, jobs, cfg.ThumbMaxBytes, nil)
+		jobs.Register(job.TypeThumb, thumbJobHandler(thumbs, engine))
+	}
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	defer stopWorker()
 	go jobs.Run(workerCtx)
@@ -266,6 +275,7 @@ func run() error {
 		SecureCookies:   cfg.SecureCookies(),
 		PreviewMaxBytes: cfg.PreviewMaxBytes,
 		ObjectStorage:   cfg.Backend == config.BackendS3,
+		Thumbs:          thumbs,
 	}).Handler()
 
 	contentHandler := content.New(content.Options{
@@ -597,6 +607,24 @@ func checksumJobHandler(checksums *checksum.Service, engine *acl.Engine) job.Han
 		}
 		_, err = checksums.Compute(ctx, path)
 		return err
+	}
+}
+
+// thumbJobHandler grows the thumbnail a job names, with the caller's
+// authority restored from the payload. Safe to retry: the source is
+// re-checked and the stored object is overwritten whole.
+func thumbJobHandler(thumbs *thumb.Service, engine *acl.Engine) job.Handler {
+	return func(ctx context.Context, payload string, _ func(done, total int64)) error {
+		var p job.ThumbPayload
+		if err := json.Unmarshal([]byte(payload), &p); err != nil {
+			return fmt.Errorf("thumb job: decode payload: %w", err)
+		}
+		subject, err := engine.LoadSubject(ctx, p.UserID, p.IsAdmin)
+		if err != nil {
+			return fmt.Errorf("thumb job: load subject: %w", err)
+		}
+		ctx = acl.NewContext(ctx, subject)
+		return thumbs.Generate(ctx, p)
 	}
 }
 

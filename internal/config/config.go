@@ -32,6 +32,7 @@ const (
 	EnvReadOnly   = "ZEFILE_READ_ONLY"
 
 	// Backend and object-storage settings
+	EnvThumbMaxBytes     = "ZEFILE_THUMB_MAX_BYTES"
 	EnvPreviewMaxBytes   = "ZEFILE_PREVIEW_MAX_BYTES"
 	EnvStorageBackend    = "ZEFILE_STORAGE_BACKEND"
 	EnvS3Endpoint        = "ZEFILE_S3_ENDPOINT"
@@ -73,6 +74,11 @@ const (
 	// DefaultPreviewMaxBytes applies when ZEFILE_PREVIEW_MAX_BYTES is
 	// unset. It mirrors the api default.
 	DefaultPreviewMaxBytes = 2 << 20
+
+	// DefaultThumbMaxBytes caps the source file a background thumbnail
+	// job will fetch: a video can be gigabytes, and one frame is not
+	// worth moving all of it.
+	DefaultThumbMaxBytes = 512 << 20
 )
 
 // Config is a validated instance configuration.
@@ -111,6 +117,9 @@ type Config struct {
 
 	// PreviewMaxBytes bounds server-side preview reads.
 	PreviewMaxBytes int64
+
+	// ThumbMaxBytes caps the source file a thumbnail job will fetch.
+	ThumbMaxBytes int64
 }
 
 // SingleOrigin reports whether user content is served from the application
@@ -167,6 +176,7 @@ func Load() (Config, error) {
 		Listen:          valueOr(os.Getenv(EnvListen), DefaultListen),
 		Reserve:         storage.DefaultReserve,
 		PreviewMaxBytes: DefaultPreviewMaxBytes,
+		ThumbMaxBytes:   DefaultThumbMaxBytes,
 	}
 
 	var err error
@@ -225,6 +235,13 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.PreviewMaxBytes = n
+	}
+	if raw := strings.TrimSpace(os.Getenv(EnvThumbMaxBytes)); raw != "" {
+		n, err := parseBytes(EnvThumbMaxBytes, raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.ThumbMaxBytes = n
 	}
 
 	return cfg, nil

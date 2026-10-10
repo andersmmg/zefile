@@ -14,6 +14,7 @@ import (
 	"github.com/krishna2206/zefile/internal/settings"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
+	"github.com/krishna2206/zefile/internal/thumb"
 	"github.com/krishna2206/zefile/internal/trash"
 	"github.com/krishna2206/zefile/internal/upload"
 	"github.com/krishna2206/zefile/internal/web"
@@ -42,6 +43,7 @@ type Server struct {
 
 	previewMaxBytes int64
 	objectStorage   bool
+	thumbs          *thumb.Service
 }
 
 // Options configures a [Server].
@@ -80,6 +82,10 @@ type Options struct {
 	// ObjectStorage reports that the backend keeps bytes remotely:
 	// no checksum verification, thumbnail sources capped.
 	ObjectStorage bool
+
+	// Thumbs serves pre-generated thumbnails, growing them in the
+	// background. Nil keeps the on-the-fly behaviour.
+	Thumbs *thumb.Service
 }
 
 // defaultPreviewMaxBytes applies when PreviewMaxBytes is unset. It
@@ -112,6 +118,7 @@ func New(opts Options) *Server {
 
 		previewMaxBytes: previewMaxBytes,
 		objectStorage:   opts.ObjectStorage,
+		thumbs:          opts.Thumbs,
 	}
 }
 

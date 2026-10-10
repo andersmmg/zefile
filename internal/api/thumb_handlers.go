@@ -26,9 +26,10 @@ const (
 	maxThumbPixels = 40_000_000
 )
 
-// handleThumb returns a small, re-encoded JPEG preview of an image.
+// handleThumb returns a small JPEG preview of an image or video frame.
 //
-// The original bytes are decoded and re-encoded, so what leaves here is a raster
+// A stored background-generated thumbnail wins; a miss enqueues a job and
+// falls back to the on-the-fly image path below. What leaves here is a raster
 // this server produced — never the uploaded file — which is why it is safe to
 // serve on the application origin rather than needing the content host. The
 // point is bandwidth: a folder of four-megabyte photos should cost kilobytes to
@@ -56,6 +57,31 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusUnsupportedMediaType, CodeBadRequest,
 			"No thumbnail", "A folder has no thumbnail.")
 		return
+	} // A stored thumbnail wins: pre-generated, any source size, video too.
+	// A miss enqueues a job and falls through to the legacy on-the-fly
+	// image path below.
+	if s.thumbs != nil {
+		if c, ok := callerFrom(r.Context()); ok {
+			data, hit, err := s.thumbs.Get(r.Context(), p, c.user.ID, c.user.IsAdmin)
+			if err != nil {
+				writeError(w, r, err)
+				return
+			}
+			if hit {
+				etag := fmt.Sprintf(`"t%d-%d-%d"`, info.ModTime.UnixNano(), info.Size, size)
+				w.Header().Set("Cache-Control", "private, no-cache")
+				w.Header().Set("ETag", etag)
+				if r.Header.Get("If-None-Match") == etag {
+					w.WriteHeader(http.StatusNotModified)
+					return
+				}
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("X-Content-Type-Options", "nosniff")
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write(data)
+				return
+			}
+		}
 	}
 
 	// In object-storage mode the source crosses the network: refuse

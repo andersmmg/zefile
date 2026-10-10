@@ -3,8 +3,9 @@ import { useState, type ReactNode } from 'react'
 import type { Entry } from '@/api'
 
 /**
- * Thumbnail shows an image entry as a small picture served by the thumbnail
- * endpoint — a compressed JPEG a few kilobytes in size, not the whole original.
+ * Thumbnail shows an image or video entry as a small picture served by the
+ * thumbnail endpoint — a compressed JPEG a few kilobytes in size, not the
+ * whole original.
  * Until it arrives, and if it fails, `children` (the coloured file icon) stands
  * in as the placeholder.
  *

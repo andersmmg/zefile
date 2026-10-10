@@ -78,6 +78,8 @@ type Session struct {
 	Complete  bool
 	Mode      string
 	PartSize  int64
+	// UserID owns the session. It is internal: responses never carry it.
+	UserID int64
 }
 
 // Store is the slice of a storage backend this service needs:
@@ -553,6 +555,7 @@ func (s *Service) toSession(row sqlcgen.Upload, offset int64) Session {
 		Size:      row.Size,
 		Offset:    offset,
 		ExpiresAt: time.Unix(row.ExpiresAt, 0).UTC(),
+		UserID:    row.UserID,
 	}
 }
 

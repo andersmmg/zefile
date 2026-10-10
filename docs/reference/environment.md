@@ -53,6 +53,12 @@ are truncated past it, and thumbnail sources past it are refused in
 object-storage mode (where every preview byte is fetched remotely). Accepts a
 bare byte count or a `KiB`/`MiB`/`GiB` suffix.
 
+### `ZEFILE_THUMB_MAX_BYTES`
+
+*Optional, default `512MiB`.* Caps the source file a background thumbnail job
+will fetch. Thumbnails themselves are small JPEGs kept under a reserved
+prefix in the same storage; larger files keep their icon. Same size format.
+
 ::: tip Retention
 How long the audit log and the trash are kept is **not** an environment setting —
 it is configured at runtime under **Settings → Retention** (admin). See the

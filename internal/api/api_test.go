@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/krishna2206/zefile/internal/job"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
+	"github.com/krishna2206/zefile/internal/thumb"
 	"github.com/krishna2206/zefile/internal/trash"
 )
 
@@ -1468,7 +1470,7 @@ type bareFS struct {
 }
 
 func (f bareFS) Stat(context.Context, storage.Path) (storage.FileInfo, error) {
-	return storage.FileInfo{}, nil
+	return storage.FileInfo{Size: int64(len(f.body))}, nil
 }
 
 func (f bareFS) Open(context.Context, storage.Path) (storage.File, error) {
@@ -1493,8 +1495,32 @@ func (cannedInfo) ModTime() time.Time { return time.Time{} }
 func (cannedInfo) IsDir() bool        { return false }
 func (cannedInfo) Sys() any           { return nil }
 
-// objectClient builds a server over bareFS in object-storage mode.
-func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string) {
+// memStore is an in-memory ThumbStore for handler tests.
+type memStore struct {
+	mu    sync.Mutex
+	blobs map[string][]byte
+}
+
+func (m *memStore) ReadThumb(_ context.Context, key string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	b, ok := m.blobs[key]
+	if !ok {
+		return nil, storage.ErrNotExist
+	}
+	return b, nil
+}
+
+func (m *memStore) WriteThumb(_ context.Context, key string, thumb []byte) error {
+	m.mu.Lock()
+	m.blobs[key] = thumb
+	m.mu.Unlock()
+	return nil
+}
+
+// objectClient builds a server over bareFS in object-storage mode. It
+// returns the thumb store for pre-seeding stored thumbnails.
+func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string, *memStore) {
 	t.Helper()
 
 	database, err := db.Open(t.Context(), db.Config{Dir: t.TempDir()})
@@ -1507,6 +1533,7 @@ func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string
 		Memory: 8, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
 	}))
 	fs := bareFS{body: []byte("hello world")}
+	store := &memStore{blobs: make(map[string][]byte)}
 	srv := httptest.NewServer(api.New(api.Options{
 		FS:              fs,
 		Auth:            service,
@@ -1514,6 +1541,7 @@ func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string
 		Checksums:       checksum.New(database, fs),
 		PreviewMaxBytes: previewMaxBytes,
 		ObjectStorage:   true,
+		Thumbs:          thumb.New(fs, store, jobsStub{}, 512<<20, nil),
 		SecureCookies:   false,
 	}).Handler())
 	t.Cleanup(srv.Close)
@@ -1536,7 +1564,14 @@ func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string
 	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
 		t.Fatalf("decode setup: %v", err)
 	}
-	return srv, session.Token
+	return srv, session.Token, store
+}
+
+// jobsStub drops background work: handler tests drive Generate directly.
+type jobsStub struct{}
+
+func (jobsStub) Enqueue(context.Context, job.Type, any) (job.Job, error) {
+	return job.Job{}, nil
 }
 
 func objectGet(t *testing.T, srv *httptest.Server, token, path string) (int, []byte) {
@@ -1570,7 +1605,7 @@ func objectPost(t *testing.T, srv *httptest.Server, token, path string, body any
 func TestObjectStorageRefusesByteJobs(t *testing.T) {
 	t.Parallel()
 
-	srv, token := objectClient(t, 0)
+	srv, token, _ := objectClient(t, 0)
 
 	if code, _ := objectGet(t, srv, token, "/api/v1/fs/checksum?path=/f.bin"); code != http.StatusNotImplemented {
 		t.Errorf("checksum = %d, want 501", code)
@@ -1586,7 +1621,7 @@ func TestObjectStorageRefusesByteJobs(t *testing.T) {
 func TestPreviewMaxBytesIsConfigurable(t *testing.T) {
 	t.Parallel()
 
-	srv, token := objectClient(t, 5)
+	srv, token, _ := objectClient(t, 5)
 
 	code, raw := objectGet(t, srv, token, "/api/v1/fs/text?path=/f.txt")
 	if code != http.StatusOK {
@@ -1601,5 +1636,36 @@ func TestPreviewMaxBytesIsConfigurable(t *testing.T) {
 	}
 	if out.Content != "hello" || !out.Truncated {
 		t.Errorf("text = %+v, want the first 5 bytes truncated", out)
+	}
+}
+
+func TestStoredThumbnailIsServed(t *testing.T) {
+	t.Parallel()
+
+	srv, token, store := objectClient(t, 0)
+
+	jpeg := []byte{0xff, 0xd8, 0xff, 0xd9}
+	key := thumb.Key("/f.png", int64(len("hello world")), time.Time{})
+	store.mu.Lock()
+	store.blobs[key] = jpeg
+	store.mu.Unlock()
+
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet,
+		srv.URL+"/api/v1/fs/thumb?path="+url.QueryEscape("/f.png"), nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET thumb: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("thumb = %d: %s", resp.StatusCode, raw)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "image/jpeg" {
+		t.Errorf("Content-Type = %q, want image/jpeg", ct)
+	}
+	if !bytes.Equal(raw, jpeg) {
+		t.Errorf("thumb = %v, want the stored bytes", raw)
 	}
 }

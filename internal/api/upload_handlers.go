@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -134,6 +135,7 @@ func (s *Server) handleUploadWrite(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	s.thumbAfterUpload(r.Context(), session)
 	writeJSON(w, r, http.StatusOK, uploadResponse(session))
 }
 
@@ -166,7 +168,21 @@ func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
 		writeUploadError(w, r, err)
 		return
 	}
+	s.thumbAfterUpload(r.Context(), session)
 	writeJSON(w, r, http.StatusOK, uploadResponse(session))
+}
+
+// thumbAfterUpload asks the thumbnail worker to depict a freshly stored
+// file. Best-effort: a miss on the next tile view enqueues the same job.
+func (s *Server) thumbAfterUpload(ctx context.Context, session upload.Session) {
+	if s.thumbs == nil {
+		return
+	}
+	u, err := s.auth.GetUser(ctx, session.UserID)
+	if err != nil {
+		return
+	}
+	s.thumbs.Request(ctx, session.Path, u.ID, u.IsAdmin)
 }
 
 func (s *Server) handleUploadCancel(w http.ResponseWriter, r *http.Request) {

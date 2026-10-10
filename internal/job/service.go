@@ -43,6 +43,10 @@ const (
 	// TypeFetch downloads a URL into storage from the server's own network,
 	// which for a large file takes far longer than a request may last.
 	TypeFetch Type = "fetch"
+
+	// TypeThumb grows a thumbnail for one file: download, frame, store.
+	// Slow for video, so it never runs in a request.
+	TypeThumb Type = "thumb"
 )
 
 // Status values mirror the CHECK constraint on the jobs table, plus the
@@ -111,6 +115,18 @@ type FetchPayload struct {
 	URL     string `json:"url"`
 	Dir     string `json:"dir"`
 	Name    string `json:"name"`
+	UserID  int64  `json:"user_id"`
+	IsAdmin bool   `json:"is_admin"`
+}
+
+// ThumbPayload names the file to depict plus the size and time the request
+// saw, so the worker skips a file that changed underneath it. Key names the
+// stored thumbnail; the user restores the caller's read authority.
+type ThumbPayload struct {
+	Path    string `json:"path"`
+	Size    int64  `json:"size"`
+	ModTime int64  `json:"mod_time"`
+	Key     string `json:"key"`
 	UserID  int64  `json:"user_id"`
 	IsAdmin bool   `json:"is_admin"`
 }

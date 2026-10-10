@@ -526,7 +526,7 @@ func (l *Local) findByNormalisation(dir, want string) (string, error) {
 // --------------------------------------------------------------------- helpers
 
 func isReservedName(name string) bool {
-	return name == TrashDir || name == UploadsDir
+	return name == TrashDir || name == UploadsDir || name == ThumbsDir
 }
 
 func isReserved(p Path) bool {

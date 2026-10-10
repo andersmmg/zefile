@@ -53,7 +53,7 @@ RUN set -eu; \
 # image would force whoever deploys to chown the host directory to a user id they
 # did not choose, which is the first thing that goes wrong in self-hosting.
 FROM alpine:3.21
-RUN apk add --no-cache su-exec tzdata ca-certificates && \
+RUN apk add --no-cache su-exec tzdata ca-certificates ffmpeg && \
     addgroup -g 1000 zefile && \
     adduser -D -u 1000 -G zefile zefile
 

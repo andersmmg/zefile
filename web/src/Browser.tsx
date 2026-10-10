@@ -53,7 +53,7 @@ import {
   type User,
 } from './api'
 import { uploadFile, type UploadProgress } from './upload'
-import { categoryLabel, entryKind, formatRelativeTime, isImage } from '@/lib/files'
+import { categoryLabel, entryKind, formatRelativeTime, isImage, isVideo } from '@/lib/files'
 import { dropEntries, readEntries } from '@/lib/dnd'
 import { Thumbnail } from '@/components/thumbnail'
 import { PreviewOverlay } from '@/components/preview-overlay'
@@ -1729,7 +1729,7 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
           }
         }}
       >
-        {isImage(entry) ? (
+        {isImage(entry) || isVideo(entry) ? (
           <Thumbnail entry={entry} size={64} className="grid size-6 place-items-center overflow-hidden rounded bg-muted">
             <Icon className={`size-5 ${color}`} />
           </Thumbnail>
@@ -1868,7 +1868,7 @@ function GridTile({ entry, actions, size, showLocation }: { entry: Entry; action
         }}
       >
         <div className="relative">
-          {isImage(entry) ? (
+          {isImage(entry) || isVideo(entry) ? (
             <Thumbnail entry={entry} className="grid aspect-square w-full place-items-center overflow-hidden rounded-md bg-muted/60">
               <Icon className={`${size.icon} ${color}`} />
             </Thumbnail>
