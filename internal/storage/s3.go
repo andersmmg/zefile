@@ -127,7 +127,7 @@ func OpenS3(cfg S3Config) (*S3, error) {
 	if _, err := client.HeadBucket(context.Background(), &awss3.HeadBucketInput{
 		Bucket: aws.String(cfg.Bucket),
 	}); err != nil {
-		return nil, fmt.Errorf("storage: s3 bucket %q: %w", cfg.Bucket, err)
+		return nil, fmt.Errorf("storage: s3 bucket %q: %w", cfg.Bucket, mapS3Err(err))
 	}
 	return s, nil
 }
@@ -136,6 +136,8 @@ func OpenS3(cfg S3Config) (*S3, error) {
 func newS3Client(cfg S3Config, endpoint string) (*awss3.Client, error) {
 	loadOpts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(cfg.Region),
+		awsconfig.WithRetryMode(aws.RetryModeStandard),
+		awsconfig.WithRetryMaxAttempts(5),
 	}
 	if cfg.AccessKeyID != "" {
 		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
@@ -525,8 +527,12 @@ func mapS3Err(err error) error {
 	var apiErr smithy.APIError
 	if errors.As(err, &apiErr) {
 		switch apiErr.ErrorCode() {
-		case "AccessDenied", "AllAccessDisabled", "SignatureDoesNotMatch", "InvalidAccessKeyId":
+		case "AccessDenied", "AllAccessDisabled", "SignatureDoesNotMatch",
+			"InvalidAccessKeyId", "ExpiredToken":
 			return ErrPermission
+		case "Conflict", "PreconditionFailed",
+			"BucketAlreadyExists", "BucketAlreadyOwnedByYou":
+			return ErrExist
 		}
 	}
 	return err

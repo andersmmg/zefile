@@ -45,6 +45,8 @@ type stubS3 struct {
 	uploads    map[string]*stubUpload
 	nextUpload int
 	pageSize   int // forces small pages to exercise pagination; 0 = unlimited
+	// collects invariant breaches when non-nil
+	violations *[]string
 }
 
 func newStubS3(seed ...string) *stubS3 {
@@ -139,6 +141,12 @@ func (s *stubS3) headObject(w http.ResponseWriter, key string) {
 }
 
 func (s *stubS3) getObject(w http.ResponseWriter, r *http.Request, key string) {
+	// A backend-issued GET would fetch object bytes through the server;
+	// only presigned (browser) GETs may carry a body back. The attempt
+	// itself is the violation, whatever it finds.
+	if s.violations != nil && !isPresigned(r) {
+		*s.violations = append(*s.violations, "signed GET "+key)
+	}
 	obj, ok := s.objects[key]
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
@@ -194,8 +202,18 @@ func parseRange(header string, size int64) (start, end int64, ok bool) {
 	return start, end, true
 }
 
+// isPresigned reports a browser-style request: capability in the query,
+// not an Authorization header. The backend signs with the header; anything
+// carrying object bytes must arrive the presigned way.
+func isPresigned(r *http.Request) bool {
+	return r.URL.Query().Has("X-Amz-Algorithm")
+}
+
 func (s *stubS3) putObject(w http.ResponseWriter, r *http.Request, key string) {
 	body, _ := io.ReadAll(r.Body)
+	if s.violations != nil && len(body) > 0 && !isPresigned(r) {
+		*s.violations = append(*s.violations, "signed PUT "+key)
+	}
 	s.objects[key] = stubObject{size: int64(len(body)), modTime: stubModTime, body: body}
 	// Echo a flexible checksum if the SDK sent one, as providers do.
 	if v := r.Header.Get("x-amz-checksum-crc32"); v != "" {
@@ -231,6 +249,9 @@ func (s *stubS3) uploadPart(w http.ResponseWriter, r *http.Request, key string, 
 		return
 	}
 	body, _ := io.ReadAll(r.Body)
+	if s.violations != nil && len(body) > 0 && !isPresigned(r) {
+		*s.violations = append(*s.violations, "signed PUT part "+key)
+	}
 	up.parts[n] = body
 	w.Header().Set("ETag", fmt.Sprintf(`"etag-%s-%d"`, q.Get("uploadId"), n))
 	w.WriteHeader(http.StatusOK)
