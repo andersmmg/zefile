@@ -37,6 +37,15 @@ func (s *Server) handleChecksum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// No verification in object-storage mode: reading the whole file
+	// through the server is never worth it. The upload-time declaration
+	// stands, unverified.
+	if s.objectStorage {
+		writeProblem(w, r, http.StatusNotImplemented, CodeNotSupported,
+			"Not supported", "Checksums are not computed for object storage.")
+		return
+	}
+
 	if s.jobs == nil {
 		writeProblem(w, r, http.StatusServiceUnavailable, CodeInternal,
 			"No worker", "Checksums need the background worker.")

@@ -58,6 +58,14 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// In object-storage mode the source crosses the network: refuse
+	// oversized sources before decoding.
+	if s.objectStorage && info.Size > s.previewMaxBytes {
+		writeProblem(w, r, http.StatusUnsupportedMediaType, CodeTooLarge,
+			"Too large", "This image is too large to make a thumbnail of.")
+		return
+	}
+
 	// A cheap identity from the metadata: the same bytes at the same size get the
 	// same tag, so a revisit is a 304 and never re-decodes. no-cache keeps a
 	// browser revalidating, so replacing the file shows the new thumbnail.

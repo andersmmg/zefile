@@ -374,10 +374,7 @@ func (s *S3) Create(context.Context, Path) (WriteFile, error) {
 	return nil, fmt.Errorf("%w: create", ErrNotSupported)
 }
 
-// Open implements [FS]. Refused: downloads are served by presigned redirect.
-func (s *S3) Open(context.Context, Path) (File, error) {
-	return nil, fmt.Errorf("%w: open", ErrNotSupported)
-}
+// Open lives in s3_open.go: ranged server-side reads.
 
 // Copy, Move, Remove and RemoveAll live in s3_copy.go.
 

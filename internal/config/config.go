@@ -32,6 +32,7 @@ const (
 	EnvReadOnly   = "ZEFILE_READ_ONLY"
 
 	// Backend and object-storage settings
+	EnvPreviewMaxBytes   = "ZEFILE_PREVIEW_MAX_BYTES"
 	EnvStorageBackend    = "ZEFILE_STORAGE_BACKEND"
 	EnvS3Endpoint        = "ZEFILE_S3_ENDPOINT"
 	EnvS3Region          = "ZEFILE_S3_REGION"
@@ -68,6 +69,10 @@ const (
 	// DefaultS3PresignTTL is how long minted capability URLs stay valid when
 	// ZEFILE_S3_PRESIGN_TTL is unset.
 	DefaultS3PresignTTL = 15 * time.Minute
+
+	// DefaultPreviewMaxBytes applies when ZEFILE_PREVIEW_MAX_BYTES is
+	// unset. It mirrors the api default.
+	DefaultPreviewMaxBytes = 2 << 20
 )
 
 // Config is a validated instance configuration.
@@ -103,6 +108,9 @@ type Config struct {
 
 	// ReadOnly refuses every write regardless of free space.
 	ReadOnly bool
+
+	// PreviewMaxBytes bounds server-side preview reads.
+	PreviewMaxBytes int64
 }
 
 // SingleOrigin reports whether user content is served from the application
@@ -154,10 +162,11 @@ func (c Config) SecureCookies() bool { return c.AppURL.Scheme == "https" }
 // Load reads the configuration from the environment.
 func Load() (Config, error) {
 	cfg := Config{
-		DataDir:   os.Getenv(EnvDataDir),
-		ConfigDir: os.Getenv(EnvConfigDir),
-		Listen:    valueOr(os.Getenv(EnvListen), DefaultListen),
-		Reserve:   storage.DefaultReserve,
+		DataDir:         os.Getenv(EnvDataDir),
+		ConfigDir:       os.Getenv(EnvConfigDir),
+		Listen:          valueOr(os.Getenv(EnvListen), DefaultListen),
+		Reserve:         storage.DefaultReserve,
+		PreviewMaxBytes: DefaultPreviewMaxBytes,
 	}
 
 	var err error
@@ -209,6 +218,13 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("config: %s must be true or false: %w", EnvReadOnly, err)
 		}
 		cfg.ReadOnly = b
+	}
+	if raw := strings.TrimSpace(os.Getenv(EnvPreviewMaxBytes)); raw != "" {
+		n, err := parseBytes(EnvPreviewMaxBytes, raw)
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.PreviewMaxBytes = n
 	}
 
 	return cfg, nil

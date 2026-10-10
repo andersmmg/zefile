@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import { CaretLeft, CaretRight, CircleNotch, DownloadSimple, X } from '@phosphor-icons/react'
 
 import { api, formatSize, type Entry } from '@/api'
-import { entryKind, isAudio, isImage, isPdf, isText, isVideo } from '@/lib/files'
+import { entryKind, isAudio, isImage, isPdf, isPreviewable, isText, isVideo } from '@/lib/files'
 import { Button } from '@/components/ui/button'
 
 /**
- * PreviewOverlay shows an image full-screen, or a PDF in a sandboxed iframe, and
- * steps through the previewable files of the current folder with the arrow keys.
+ * PreviewOverlay shows a file full-screen — image, video, audio, PDF, text —
+ * and steps through the folder's files with the arrow keys. A file with no
+ * inline preview gets a card saying so with a download button, so opening
+ * one never starts a surprise download.
  *
  * A PDF only renders in place when the content origin is separate from the app:
  * on a single-origin instance the file is served as an attachment, so an iframe
@@ -34,6 +36,7 @@ export function PreviewOverlay({
   const [failed, setFailed] = useState(false)
 
   const asText = isText(entry)
+  const previewable = isPreviewable(entry)
 
   useEffect(() => {
     let alive = true
@@ -41,14 +44,15 @@ export function PreviewOverlay({
     setText(null)
     setFailed(false)
 
-    // Text is read same-origin and size-capped; everything else is a signed
-    // link the browser's own image/video/audio/pdf handling streams.
+    // Text is read same-origin and size-capped; anything else previewable is
+    // a signed link the browser's own handling streams. Files with no inline
+    // preview need no link at all.
     if (asText) {
       api
         .fileText(entry.path)
         .then((t) => alive && setText(t))
         .catch(() => alive && setFailed(true))
-    } else {
+    } else if (previewable) {
       api
         .downloadLink(entry.path)
         .then(({ url }) => alive && setUrl(url))
@@ -57,7 +61,7 @@ export function PreviewOverlay({
     return () => {
       alive = false
     }
-  }, [entry.path, asText])
+  }, [entry.path, asText, previewable])
 
   const index = siblings.findIndex((e) => e.path === entry.path)
   const prev = index > 0 ? siblings[index - 1]! : null
@@ -109,6 +113,8 @@ export function PreviewOverlay({
         <div className="flex max-h-full items-center justify-center" onClick={(e) => e.stopPropagation()}>
           {failed ? (
             <Fallback entry={entry} message="This file could not be loaded." onDownload={onDownload} />
+          ) : !previewable ? (
+            <Fallback entry={entry} message="This file can't be previewed." onDownload={onDownload} />
           ) : asText ? (
             text === null ? (
               <CircleNotch className="size-8 animate-spin text-white/70" aria-label="Loading" />

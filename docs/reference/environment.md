@@ -46,6 +46,13 @@ reserve.
 *Optional, default `false`.* When `true`, refuses every write regardless of free
 space. Useful for maintenance or a read-only mirror.
 
+### `ZEFILE_PREVIEW_MAX_BYTES`
+
+*Optional, default `2MiB`.* Bounds server-side preview reads: text previews
+are truncated past it, and thumbnail sources past it are refused in
+object-storage mode (where every preview byte is fetched remotely). Accepts a
+bare byte count or a `KiB`/`MiB`/`GiB` suffix.
+
 ::: tip Retention
 How long the audit log and the trash are kept is **not** an environment setting —
 it is configured at runtime under **Settings → Retention** (admin). See the

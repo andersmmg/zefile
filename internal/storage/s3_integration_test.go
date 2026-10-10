@@ -124,9 +124,18 @@ func TestS3IntegrationRoundTrip(t *testing.T) {
 		t.Fatalf("List(/) = %+v, %v; want only the alpha directory", root, err)
 	}
 
-	// Refusals stay refusals on a real server, not stub artefacts.
-	if _, err := s.Open(ctx, MustParsePath("/alpha/beta/gamma/file.bin")); !errors.Is(err, ErrNotSupported) {
-		t.Errorf("Open = %v, want ErrNotSupported", err)
+	// Server-side reads work on a real server.
+	f, err := s.Open(ctx, MustParsePath("/alpha/beta/gamma/file.bin"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	got, err := io.ReadAll(f)
+	_ = f.Close()
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if !bytes.Equal(got, body) {
+		t.Errorf("Open read %d bytes, want %d identical", len(got), len(body))
 	}
 }
 

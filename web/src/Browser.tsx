@@ -53,7 +53,7 @@ import {
   type User,
 } from './api'
 import { uploadFile, type UploadProgress } from './upload'
-import { categoryLabel, entryKind, formatRelativeTime, isImage, isPreviewable } from '@/lib/files'
+import { categoryLabel, entryKind, formatRelativeTime, isImage } from '@/lib/files'
 import { dropEntries, readEntries } from '@/lib/dnd'
 import { Thumbnail } from '@/components/thumbnail'
 import { PreviewOverlay } from '@/components/preview-overlay'
@@ -532,7 +532,9 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const ordered = useMemo(() => groups.flatMap((g) => g.entries), [groups])
   const listRows = useMemo(() => flattenGroups(groups), [groups])
   const selected = useMemo(() => ordered.filter((e) => selection.has(e.path)), [ordered, selection])
-  const previewSiblings = useMemo(() => ordered.filter(isPreviewable), [ordered])
+  // Arrow-key navigation walks every file, not just previewable ones: any
+  // file can be the open preview, including ones with no inline rendering.
+  const previewSiblings = useMemo(() => ordered.filter((e) => !e.is_dir), [ordered])
 
   const download = useCallback(async (entry: Entry) => {
     try {
@@ -653,8 +655,8 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       if (entry.is_dir) {
         setPath(entry.path)
         setQuery('') // opening a folder leaves search and shows that folder
-      } else if (isPreviewable(entry)) setPreview(entry)
-      else void download(entry)
+      } else setPreview(entry) // files always open the preview; the overlay
+      // owns the download button, so nothing downloads unasked
     },
     download,
     downloadZip: (entry) => void downloadZip([entry]),
@@ -1515,12 +1517,10 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
           </ContextMenuItem>
         ) : (
           <>
-            {isPreviewable(entry) && (
-              <ContextMenuItem onSelect={() => actions.open(entry)}>
-                <Eye />
-                Open
-              </ContextMenuItem>
-            )}
+            <ContextMenuItem onSelect={() => actions.open(entry)}>
+              <Eye />
+              Open
+            </ContextMenuItem>
             <ContextMenuItem onSelect={() => actions.download(entry)}>
               <Download />
               Download

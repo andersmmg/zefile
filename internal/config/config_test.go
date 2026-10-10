@@ -25,6 +25,7 @@ func setBaseEnv(t *testing.T) {
 	t.Setenv(EnvS3AccessKeyID, "")
 	t.Setenv(EnvS3SecretAccessKey, "")
 	t.Setenv(EnvS3ForcePathStyle, "")
+	t.Setenv(EnvPreviewMaxBytes, "")
 }
 
 func TestBackendDefaultsToLocal(t *testing.T) {
@@ -113,6 +114,33 @@ func TestS3BackendValidation(t *testing.T) {
 	// them the S3 settings resolve to the compiled defaults.
 	if cfg.S3.PartSize != DefaultS3PartSize || cfg.S3.PresignTTL != DefaultS3PresignTTL {
 		t.Errorf("S3 defaults = %+v, want part size %d and TTL %v", cfg.S3, DefaultS3PartSize, DefaultS3PresignTTL)
+	}
+}
+
+func TestPreviewMaxBytes(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv(EnvDataDir, t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PreviewMaxBytes != DefaultPreviewMaxBytes {
+		t.Errorf("PreviewMaxBytes = %d, want default %d", cfg.PreviewMaxBytes, DefaultPreviewMaxBytes)
+	}
+
+	t.Setenv(EnvPreviewMaxBytes, "512KiB")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.PreviewMaxBytes != 512<<10 {
+		t.Errorf("PreviewMaxBytes = %d, want %d", cfg.PreviewMaxBytes, 512<<10)
+	}
+
+	t.Setenv(EnvPreviewMaxBytes, "zero")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), EnvPreviewMaxBytes) {
+		t.Fatalf("Load with a bad size = %v, want an %s error", err, EnvPreviewMaxBytes)
 	}
 }
 

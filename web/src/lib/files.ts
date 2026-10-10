@@ -147,8 +147,8 @@ export function isText(entry: Entry): boolean {
   return TEXT_EXTENSIONS.has(extensionOf(entry)) || TEXT_NAMES.has(entry.name.toLowerCase())
 }
 
-/** isPreviewable reports whether opening an entry should show a preview rather
- *  than download it. */
+/** isPreviewable reports whether an entry renders inline in the preview
+ *  overlay. Anything else still opens the overlay, with a download prompt. */
 export function isPreviewable(entry: Entry): boolean {
   return isImage(entry) || isPdf(entry) || isVideo(entry) || isAudio(entry) || isText(entry)
 }

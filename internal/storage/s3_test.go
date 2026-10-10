@@ -144,14 +144,54 @@ func (s *stubS3) getObject(w http.ResponseWriter, r *http.Request, key string) {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Length", strconv.FormatInt(obj.size, 10))
 	w.Header().Set("Last-Modified", obj.modTime.Format(http.TimeFormat))
 	// A per-request override, as providers honour on presigned GETs.
 	if disp := r.URL.Query().Get("response-content-disposition"); disp != "" {
 		w.Header().Set("Content-Disposition", disp)
 	}
+	body := obj.body
+	if rg := r.Header.Get("Range"); rg != "" {
+		start, end, ok := parseRange(rg, int64(len(body)))
+		if !ok {
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		body = body[start : end+1]
+		w.Header().Set("Content-Range",
+			fmt.Sprintf("bytes %d-%d/%d", start, end, len(obj.body)))
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.WriteHeader(http.StatusPartialContent)
+		_, _ = w.Write(body)
+		return
+	}
+	w.Header().Set("Content-Length", strconv.FormatInt(obj.size, 10))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(obj.body)
+	_, _ = w.Write(body)
+}
+
+// parseRange reads a `bytes=start-end` header against a body length.
+func parseRange(header string, size int64) (start, end int64, ok bool) {
+	v, found := strings.CutPrefix(header, "bytes=")
+	if !found {
+		return 0, 0, false
+	}
+	lo, hi, found := strings.Cut(v, "-")
+	if !found {
+		return 0, 0, false
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(lo), 10, 64)
+	if err != nil || start < 0 || start >= size {
+		return 0, 0, false
+	}
+	end = size - 1
+	if strings.TrimSpace(hi) != "" {
+		end, err = strconv.ParseInt(strings.TrimSpace(hi), 10, 64)
+		if err != nil || end < start {
+			return 0, 0, false
+		}
+		end = min(end, size-1)
+	}
+	return start, end, true
 }
 
 func (s *stubS3) putObject(w http.ResponseWriter, r *http.Request, key string) {
@@ -678,8 +718,9 @@ func TestS3RefusedOperations(t *testing.T) {
 	if _, err := s.Create(ctx, p); !errors.Is(err, ErrNotSupported) {
 		t.Errorf("Create = %v, want ErrNotSupported", err)
 	}
-	if _, err := s.Open(ctx, p); !errors.Is(err, ErrNotSupported) {
-		t.Errorf("Open = %v, want ErrNotSupported", err)
+	// Open reads server-side; a missing path is absence, not refusal.
+	if _, err := s.Open(ctx, p); !errors.Is(err, ErrNotExist) {
+		t.Errorf("Open = %v, want ErrNotExist", err)
 	}
 	// Copy, move and delete answer ErrNotExist on a missing path.
 	if err := s.Remove(ctx, p); !errors.Is(err, ErrNotExist) {

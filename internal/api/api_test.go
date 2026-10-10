@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1456,5 +1457,149 @@ func TestTextPreviewCapsSize(t *testing.T) {
 	// A directory is not text.
 	if resp, _ := c.do(http.MethodGet, "/api/v1/fs/text?path=/", nil); resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("text of dir = %d, want 400", resp.StatusCode)
+	}
+}
+
+// bareFS offers no staging, extraction, or checksum support. Stat reports
+// a file and Open serves a canned body.
+type bareFS struct {
+	storage.FS
+	body []byte
+}
+
+func (f bareFS) Stat(context.Context, storage.Path) (storage.FileInfo, error) {
+	return storage.FileInfo{}, nil
+}
+
+func (f bareFS) Open(context.Context, storage.Path) (storage.File, error) {
+	return cannedFile{Reader: bytes.NewReader(f.body), size: int64(len(f.body))}, nil
+}
+
+type cannedFile struct {
+	*bytes.Reader
+	size int64
+}
+
+func (cannedFile) Close() error { return nil }
+
+func (f cannedFile) Stat() (fs.FileInfo, error) { return cannedInfo{size: f.size}, nil }
+
+type cannedInfo struct{ size int64 }
+
+func (cannedInfo) Name() string       { return "f.txt" }
+func (i cannedInfo) Size() int64      { return i.size }
+func (cannedInfo) Mode() os.FileMode  { return 0 }
+func (cannedInfo) ModTime() time.Time { return time.Time{} }
+func (cannedInfo) IsDir() bool        { return false }
+func (cannedInfo) Sys() any           { return nil }
+
+// objectClient builds a server over bareFS in object-storage mode.
+func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string) {
+	t.Helper()
+
+	database, err := db.Open(t.Context(), db.Config{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	service := auth.New(database, auth.WithParams(auth.Params{
+		Memory: 8, Iterations: 1, Parallelism: 1, SaltLength: 16, KeyLength: 32,
+	}))
+	fs := bareFS{body: []byte("hello world")}
+	srv := httptest.NewServer(api.New(api.Options{
+		FS:              fs,
+		Auth:            service,
+		ACL:             acl.New(database),
+		Checksums:       checksum.New(database, fs),
+		PreviewMaxBytes: previewMaxBytes,
+		ObjectStorage:   true,
+		SecureCookies:   false,
+	}).Handler())
+	t.Cleanup(srv.Close)
+
+	token, err := service.IssueSetupToken(t.Context())
+	if err != nil {
+		t.Fatalf("IssueSetupToken: %v", err)
+	}
+	payload, _ := json.Marshal(map[string]string{
+		"token": token, "username": "krishna", "password": "correct horse battery",
+	})
+	resp, err := srv.Client().Post(srv.URL+"/api/v1/setup", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	defer resp.Body.Close()
+	var session struct {
+		Token string `json:"token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&session); err != nil {
+		t.Fatalf("decode setup: %v", err)
+	}
+	return srv, session.Token
+}
+
+func objectGet(t *testing.T, srv *httptest.Server, token, path string) (int, []byte) {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+path, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, raw
+}
+
+func objectPost(t *testing.T, srv *httptest.Server, token, path string, body any) int {
+	t.Helper()
+	encoded, _ := json.Marshal(body)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL+path, bytes.NewReader(encoded))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("POST %s: %v", path, err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.ReadAll(resp.Body)
+	return resp.StatusCode
+}
+
+func TestObjectStorageRefusesByteJobs(t *testing.T) {
+	t.Parallel()
+
+	srv, token := objectClient(t, 0)
+
+	if code, _ := objectGet(t, srv, token, "/api/v1/fs/checksum?path=/f.bin"); code != http.StatusNotImplemented {
+		t.Errorf("checksum = %d, want 501", code)
+	}
+	if code := objectPost(t, srv, token, "/api/v1/fs/extract", map[string]string{"archive": "/a.zip"}); code != http.StatusNotImplemented {
+		t.Errorf("extract = %d, want 501", code)
+	}
+	if code := objectPost(t, srv, token, "/api/v1/fs/fetch", map[string]string{"url": "https://example.com/f"}); code != http.StatusNotImplemented {
+		t.Errorf("fetch = %d, want 501", code)
+	}
+}
+
+func TestPreviewMaxBytesIsConfigurable(t *testing.T) {
+	t.Parallel()
+
+	srv, token := objectClient(t, 5)
+
+	code, raw := objectGet(t, srv, token, "/api/v1/fs/text?path=/f.txt")
+	if code != http.StatusOK {
+		t.Fatalf("text = %d: %s", code, raw)
+	}
+	var out struct {
+		Content   string `json:"content"`
+		Truncated bool   `json:"truncated"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Content != "hello" || !out.Truncated {
+		t.Errorf("text = %+v, want the first 5 bytes truncated", out)
 	}
 }

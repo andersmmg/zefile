@@ -39,6 +39,9 @@ type Server struct {
 	version       string
 	singleOrigin  bool
 	secureCookies bool
+
+	previewMaxBytes int64
+	objectStorage   bool
 }
 
 // Options configures a [Server].
@@ -69,10 +72,26 @@ type Options struct {
 	SingleOrigin bool
 
 	SecureCookies bool
+
+	// PreviewMaxBytes bounds server-side preview reads. Non-positive
+	// means the 2 MiB default.
+	PreviewMaxBytes int64
+
+	// ObjectStorage reports that the backend keeps bytes remotely:
+	// no checksum verification, thumbnail sources capped.
+	ObjectStorage bool
 }
+
+// defaultPreviewMaxBytes applies when PreviewMaxBytes is unset. It
+// mirrors config.DefaultPreviewMaxBytes.
+const defaultPreviewMaxBytes = 2 << 20
 
 // New builds the application-origin handler.
 func New(opts Options) *Server {
+	previewMaxBytes := opts.PreviewMaxBytes
+	if previewMaxBytes <= 0 {
+		previewMaxBytes = defaultPreviewMaxBytes
+	}
 	return &Server{
 		fs:            opts.FS,
 		auth:          opts.Auth,
@@ -90,6 +109,9 @@ func New(opts Options) *Server {
 		version:       opts.Version,
 		singleOrigin:  opts.SingleOrigin,
 		secureCookies: opts.SecureCookies,
+
+		previewMaxBytes: previewMaxBytes,
+		objectStorage:   opts.ObjectStorage,
 	}
 }
 

@@ -249,6 +249,13 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// No staging area on object storage: refuse at enqueue.
+	if _, ok := s.fs.(storage.Extractor); !ok {
+		writeProblem(w, r, http.StatusNotImplemented, CodeNotSupported,
+			"Not supported", "Extraction is not supported for object storage.")
+		return
+	}
+
 	dest := archive.Parent()
 	if body.Dest != "" {
 		dest, ok = parsePath(w, r, body.Dest)
@@ -315,6 +322,13 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		writeProblem(w, r, http.StatusBadRequest, CodeBadRequest,
 			"Invalid URL", "Provide an http or https URL.")
+		return
+	}
+
+	// No staging area on object storage: refuse at enqueue.
+	if _, ok := s.fs.(storage.Stager); !ok {
+		writeProblem(w, r, http.StatusNotImplemented, CodeNotSupported,
+			"Not supported", "URL downloads are not supported for object storage.")
 		return
 	}
 
@@ -481,9 +495,7 @@ func bundleName(paths []storage.Path) string {
 	return "zefile.zip"
 }
 
-// maxTextPreviewBytes bounds a text preview. Enough for a source file or a log
-// tail; a caller wanting the whole of a huge file downloads it.
-const maxTextPreviewBytes = 2 << 20 // 2 MiB
+// Text previews are bounded by the server's previewMaxBytes.
 
 type textResponse struct {
 	Content   string `json:"content"`
@@ -517,14 +529,15 @@ func (s *Server) handleText(w http.ResponseWriter, r *http.Request) {
 
 	// Read one byte past the cap so a file exactly at the cap is not mislabelled
 	// truncated, and anything larger is.
-	buf, err := io.ReadAll(io.LimitReader(file, maxTextPreviewBytes+1))
+	max := int(s.previewMaxBytes)
+	buf, err := io.ReadAll(io.LimitReader(file, int64(max)+1))
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	truncated := len(buf) > maxTextPreviewBytes
+	truncated := len(buf) > max
 	if truncated {
-		buf = buf[:maxTextPreviewBytes]
+		buf = buf[:max]
 	}
 
 	// Invalid UTF-8 becomes U+FFFD in the JSON string rather than corrupting the
