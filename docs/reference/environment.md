@@ -86,7 +86,7 @@ credentials (unset means the ambient AWS chain). `ZEFILE_S3_PREFIX` scopes the
 tree inside the bucket, `ZEFILE_S3_FORCE_PATH_STYLE` switches to path-style
 addressing, `ZEFILE_S3_PUBLIC_ENDPOINT` is the bucket's address as clients see
 it (for presigned URLs), `ZEFILE_S3_PART_SIZE` is the multipart part length
-(default 16 MiB, min 5 MiB), and `ZEFILE_S3_PRESIGN_TTL` bounds minted
+(default 64 MiB, min 5 MiB; the browser uploads several parts concurrently), and `ZEFILE_S3_PRESIGN_TTL` bounds minted
 capability URLs (default 15 min).
 
 ### `ZEFILE_S3_META_TTL`

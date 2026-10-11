@@ -49,6 +49,7 @@ export async function uploadFile(
   targetPath: string,
   onProgress: (sent: number, speed: number) => void,
   signal?: AbortSignal,
+  parallelism = defaultParallelism,
 ): Promise<void> {
   const created = await fetch('/api/v1/uploads', {
     method: 'POST',
@@ -72,7 +73,7 @@ export async function uploadFile(
     part_size?: number
   } | null
   if (session?.mode === 'direct' && Number(session.part_size) > 0) {
-    await uploadDirect(file, location, Number(session.part_size), onProgress, signal)
+    await uploadDirect(file, location, Number(session.part_size), onProgress, signal, parallelism)
     return
   }
 
@@ -179,6 +180,103 @@ function makeReporter(onProgress: (sent: number, speed: number) => void) {
  *  refill the window a few parts ahead. */
 const partBatch = 8
 
+/** defaultParallelism caps concurrent part PUTs. One stream rarely fills an
+ *  uplink to object storage — B2's own CLI defaults to ten threads — while
+ *  browsers allow about six connections per origin, so four is the sweet
+ *  spot: several times the throughput without starving the page. */
+export const defaultParallelism = 4
+
+/** DirectDeps bundles uploadDirectParts' network surface so tests can drive
+ *  the concurrent path — out-of-order completion, aborts, retries — without
+ *  a server or storage. */
+export type DirectDeps = {
+  partURLs: (session: string, parts: number[], signal?: AbortSignal) => Promise<Map<number, string>>
+  putPart: (
+    url: string,
+    body: Blob,
+    report: (loaded: number, force?: boolean) => void,
+    signal?: AbortSignal,
+  ) => Promise<void>
+  currentOffset: (session: string, signal?: AbortSignal) => Promise<number>
+  completeSession: (session: string, signal?: AbortSignal) => Promise<void>
+}
+
+/** runPool runs tasks with at most `limit` in flight. Results keep task
+ *  order. A failure stops starting new tasks and the first error wins once
+ *  the in-flight ones settle — every promise is observed, so nothing rejects
+ *  unhandled, and parts that landed stay landed for resume. Tasks must
+ *  observe `signal`: the pool waits for in-flight tasks before reporting an
+ *  abort. Exported for tests. */
+export async function runPool<T>(
+  tasks: (() => Promise<T>)[],
+  limit: number,
+  signal?: AbortSignal,
+): Promise<T[]> {
+  const results = new Array<T>(tasks.length)
+  let next = 0
+  let failed = false
+  let firstError: unknown = null
+  const workers = Array.from({ length: Math.max(0, Math.min(limit, tasks.length)) }, async () => {
+    for (;;) {
+      if (signal?.aborted || failed) return
+      const i = next++
+      if (i >= tasks.length) return
+      try {
+        results[i] = await tasks[i]!()
+      } catch (err) {
+        if (!failed) {
+          failed = true
+          firstError = err
+        }
+        return
+      }
+    }
+  })
+  await Promise.all(workers)
+  if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
+  if (failed) throw firstError
+  return results
+}
+
+function sleepOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) return Promise.reject(new DOMException('aborted', 'AbortError'))
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup()
+      resolve()
+    }, ms)
+    const onAbort = () => {
+      clearTimeout(timer)
+      cleanup()
+      reject(new DOMException('aborted', 'AbortError'))
+    }
+    const cleanup = () => signal?.removeEventListener('abort', onAbort)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+/** retryWithBackoff retries a transient failure with capped exponential
+ *  backoff. Aborts propagate at once and never retry. Exported for tests. */
+export async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  signal?: AbortSignal,
+  tries = 4,
+  baseDelayMs = 500,
+): Promise<T> {
+  let delay = baseDelayMs
+  for (;;) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) throw err
+      if (tries <= 1) throw err
+      tries--
+      await sleepOrAbort(delay, signal)
+      delay = Math.min(delay * 2, 8000)
+    }
+  }
+}
+
 /**
  * uploadDirect sends every part of a file straight to storage.
  *
@@ -187,6 +285,8 @@ const partBatch = 8
  * end, completes the upload once storage holds every declared byte. Parts
  * are committed atomically, so after a failure the session offset tells
  * exactly which parts to skip — resuming never re-sends a part that landed.
+ * Parts within a URL batch fly concurrently (completion order does not
+ * matter: parts are numbered), each with its own retry.
  */
 async function uploadDirect(
   file: File,
@@ -194,18 +294,42 @@ async function uploadDirect(
   partSize: number,
   onProgress: (sent: number, speed: number) => void,
   signal?: AbortSignal,
+  parallelism = defaultParallelism,
+): Promise<void> {
+  await uploadDirectParts(file, session, partSize, onProgress, signal, parallelism, {
+    partURLs,
+    putPart,
+    currentOffset,
+    completeSession,
+  })
+}
+
+/** uploadDirectParts is uploadDirect with injectable network, so tests can
+ *  drive the concurrent path without a server. Exported for tests. */
+export async function uploadDirectParts(
+  file: Blob,
+  session: string,
+  partSize: number,
+  onProgress: (sent: number, speed: number) => void,
+  signal: AbortSignal | undefined,
+  parallelism: number,
+  deps: DirectDeps,
+  retry?: { tries: number; baseMs: number },
 ): Promise<void> {
   const report = makeReporter(onProgress)
   const totalParts = Math.ceil(file.size / partSize)
 
   // An empty file has no parts: completing publishes the empty object.
   if (totalParts === 0) {
-    await completeSession(session, signal)
+    await deps.completeSession(session, signal)
     report(0, true)
     return
   }
 
-  let done = await currentOffset(session, signal)
+  const parallel = Math.min(Math.max(1, parallelism), partBatch)
+  const tries = retry?.tries ?? 4
+  const baseMs = retry?.baseMs ?? 500
+  let done = await deps.currentOffset(session, signal)
   while (done < file.size) {
     if (signal?.aborted) throw new DOMException('aborted', 'AbortError')
 
@@ -213,21 +337,46 @@ async function uploadDirect(
     const firstPart = Math.floor(done / partSize) + 1
     const want: number[] = []
     for (let n = firstPart; n <= totalParts && want.length < partBatch; n++) want.push(n)
-    const urls = await partURLs(session, want, signal)
+    const urls = await deps.partURLs(session, want, signal)
 
-    for (const n of want) {
+    // Progress is the committed offset plus what the in-flight parts report.
+    const inflight = new Map<number, number>()
+    const aggregate = (force = false) => {
+      let loaded = 0
+      for (const v of inflight.values()) loaded += v
+      report(Math.min(file.size, done + loaded), force)
+    }
+    const uploads = want.map((n) => async () => {
       const url = urls.get(n)
       if (!url) throw new Error(`the server did not sign part ${n}`)
       const start = (n - 1) * partSize
-      await putPart(url, file.slice(start, Math.min(start + partSize, file.size)), start, report, signal)
-    }
+      const end = Math.min(start + partSize, file.size)
+      await retryWithBackoff(
+        () =>
+          deps.putPart(
+            url,
+            file.slice(start, end),
+            (loaded, force) => {
+              inflight.set(n, loaded)
+              aggregate(force)
+            },
+            signal,
+          ),
+        signal,
+        tries,
+        baseMs,
+      )
+      inflight.delete(n)
+      aggregate()
+    })
+    await runPool(uploads, parallel, signal)
 
     // The offset is what storage acknowledges; re-read it so retries skip parts.
-    done = Math.max(done, await currentOffset(session, signal))
+    done = Math.max(done, await deps.currentOffset(session, signal))
     report(done, true)
   }
 
-  await completeSession(session, signal)
+  await deps.completeSession(session, signal)
   report(file.size, true)
 }
 
@@ -255,15 +404,15 @@ async function completeSession(session: string, signal?: AbortSignal): Promise<v
   if (!response.ok) throw new Error(await describeFailure(response))
 }
 
-/** putPart sends one part straight to storage, reporting progress as it leaves.
+/** putPart sends one part straight to storage, reporting the part-relative
+ *  bytes as they leave (the caller aggregates across concurrent parts).
  *
  * No credentials ride along: the URL itself is the bearer credential, and
  * cookies would only fail a wildcard CORS answer. */
 function putPart(
   url: string,
   body: Blob,
-  base: number,
-  report: (sent: number, force?: boolean) => void,
+  report: (loaded: number, force?: boolean) => void,
   signal?: AbortSignal,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -276,7 +425,7 @@ function putPart(
     const done = () => signal?.removeEventListener('abort', onAbort)
 
     xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) report(base + e.loaded)
+      if (e.lengthComputable) report(e.loaded)
     }
     xhr.onload = () => {
       done()
@@ -284,7 +433,7 @@ function putPart(
         reject(new Error(describeXhr(xhr)))
         return
       }
-      report(base + body.size, true)
+      report(body.size, true)
       resolve()
     }
     xhr.onerror = () => {

@@ -52,7 +52,7 @@ import {
   type Space,
   type User,
 } from './api'
-import { uploadFile, type UploadProgress } from './upload'
+import { runPool, uploadFile, type UploadProgress } from './upload'
 import { categoryLabel, entryKind, formatRelativeTime, isImage, isMembersTop, isVideo } from '@/lib/files'
 import { dropEntries, readEntries } from '@/lib/dnd'
 import { Thumbnail } from '@/components/thumbnail'
@@ -463,7 +463,9 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
 
   // runUpload sends a batch to target/<name>, where a name may be a bare file
   // name or a nested path. One queue and one progress path serve a plain import,
-  // a picked folder, and a dropped folder alike.
+  // a picked folder, and a dropped folder alike. Up to maxFiles files fly at
+  // once, each with its own concurrent parts, so a batch saturates the link
+  // instead of queueing behind one big file.
   const runUpload = useCallback(
     async (items: { file: File; name: string }[], target: string) => {
       if (items.length === 0) return
@@ -473,6 +475,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         uploadControllers.current.set(id, controller)
         return { id, file, name, signal: controller.signal }
       })
+      const maxFiles = 3
 
       // Show the whole batch at once, as a queue, so someone sees every file
       // they meant to send rather than only the one in flight.
@@ -499,7 +502,9 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         if (pathRef.current === target) void load(target, { silent: true })
       }
 
-      for (const { id, file, name, signal } of queued) {
+      // Files complete in whatever order they finish; the panel rows are
+      // keyed by id, and the refresh is time-coalesced, so order is irrelevant.
+      const uploads = queued.map(({ id, file, name, signal }) => async () => {
         const update = (patch: Partial<UploadProgress>) =>
           setTransfers((current) => current.map((t) => (t.id === id ? { ...t, ...patch } : t)))
 
@@ -507,7 +512,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         if (signal.aborted) {
           update({ status: 'cancelled', speed: 0 })
           uploadControllers.current.delete(id)
-          continue
+          return
         }
         update({ status: 'uploading' })
         try {
@@ -532,7 +537,8 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         }
 
         refresh(false)
-      }
+      })
+      await runPool(uploads, maxFiles)
       refresh(true)
     },
     [load, refreshSpace],
@@ -2492,7 +2498,7 @@ function Transfers({
               <span
                 className={`min-w-0 flex-1 truncate text-sm ${
                   transfer.status === 'queued' ? 'text-muted-foreground' : ''
-                }`}
+                } ${transfer.status === 'cancelled' ? 'text-muted-foreground line-through' : ''}`}
               >
                 {transfer.name}
               </span>

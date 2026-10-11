@@ -71,7 +71,10 @@ type DirectStager interface {
 const MaxMultipartParts = 10000
 
 // DefaultPartSize is the multipart part length when none is configured.
-const DefaultPartSize = 16 << 20
+// Large enough that a fast uplink spends its time sending bytes rather than
+// per-request round trips; the client flies several parts concurrently, so
+// this is the unit of parallelism, not of serialisation.
+const DefaultPartSize = 64 << 20
 
 // PartSizeFor resolves the part length for a transfer: the configured size,
 // grown so even the largest declared size fits under [MaxMultipartParts].
