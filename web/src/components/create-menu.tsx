@@ -1,4 +1,4 @@
-import { CaretDown, FileArrowUp, FolderPlus, FolderSimplePlus, LinkSimple, Plus } from '@phosphor-icons/react'
+import { CaretDown, FileArrowUp, FolderPlus, FolderSimplePlus, LinkSimple, Plus, PlusCircleIcon, PlusSquareIcon } from '@phosphor-icons/react'
 
 import { Button } from '@/components/ui/button'
 import { ContextMenuItem } from '@/components/ui/context-menu'
@@ -33,7 +33,7 @@ export function NewButton({ actions, disabled }: { actions: CreateActions; disab
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button className="justify-start gap-2" disabled={disabled}>
-          <Plus />
+          <PlusCircleIcon />
           New
           <CaretDown className="ml-auto size-4 opacity-70" />
         </Button>

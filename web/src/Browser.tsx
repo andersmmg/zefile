@@ -54,7 +54,7 @@ import {
 } from './api'
 import { runPool, uploadFile, type UploadProgress } from './upload'
 import { categoryLabel, entryKind, formatRelativeTime, isImage, isMembersTop, isVideo } from '@/lib/files'
-import { dropEntries, readEntries } from '@/lib/dnd'
+import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
 import { Thumbnail } from '@/components/thumbnail'
 import { PreviewOverlay } from '@/components/preview-overlay'
 import { Button } from '@/components/ui/button'
@@ -203,6 +203,9 @@ type EntryActions = {
   // Drag-to-move: dragPaths is what a drag starting on an entry carries (the
   // selection, or just that entry); moveInto drops those paths into a folder.
   dragPaths: (entry: Entry) => string[]
+  // tileSize is the grid's current icon size, so a multi-item drag preview is
+  // built at the same size as the tiles on screen.
+  tileSize: GridSize
   moveInto: (dirPath: string, dirName: string, paths: string[]) => void
   dropTarget: string | null
   setDropTarget: (path: string | null) => void
@@ -805,6 +808,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     perms,
     dragPaths: (entry) =>
       selection.has(entry.path) && selected.length > 0 ? selected.map((e) => e.path) : [entry.path],
+    tileSize: GRID_SIZES[gridSize]!,
     moveInto,
     dropTarget,
     setDropTarget,
@@ -1564,8 +1568,10 @@ function clearUnlessEntry(e: MouseEvent, onClearSelection: () => void) {
  * files in-app: any entry can be picked up, and a folder accepts a drop. The
  * MOVE_MIME payload marks the drag as an internal move so it never triggers the
  * upload overlay, and `isTarget` says whether this folder is the one hovered.
+ * `variant` picks the multi-item preview's shape: a grid tile, or the list
+ * row's horizontal bar.
  */
-function moveDragProps(entry: Entry, actions: EntryActions) {
+function moveDragProps(entry: Entry, actions: EntryActions, variant: 'tile' | 'row' = 'tile') {
   const managed = isMembersTop(entry.path)
   const isTarget = entry.is_dir && actions.dropTarget === entry.path
   return {
@@ -1573,10 +1579,15 @@ function moveDragProps(entry: Entry, actions: EntryActions) {
     draggable: !managed,
     onDragStart: (e: DragEvent) => {
       if (managed) return
-      e.dataTransfer.setData(MOVE_MIME, JSON.stringify(actions.dragPaths(entry)))
+      const paths = actions.dragPaths(entry)
+      e.dataTransfer.setData(MOVE_MIME, JSON.stringify(paths))
       e.dataTransfer.effectAllowed = 'move'
+      installDragGhost(e.dataTransfer, paths.length, actions.tileSize, variant)
     },
-    onDragEnd: () => actions.setDropTarget(null),
+    onDragEnd: () => {
+      clearDragGhost()
+      actions.setDropTarget(null)
+    },
     onDragOver: (e: DragEvent) => {
       if (!entry.is_dir || !e.dataTransfer.types.includes(MOVE_MIME)) return
       if (entry.path === '/members') return
@@ -2001,7 +2012,7 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
   const { icon: Icon, color } = entryKind(entry)
   const selected = actions.isSelected(entry)
   const shared = actions.isShared(entry)
-  const { isTarget, ...drag } = moveDragProps(entry, actions)
+  const { isTarget, ...drag } = moveDragProps(entry, actions, 'row')
   return (
     <EntryMenu entry={entry} actions={actions}>
       <div
