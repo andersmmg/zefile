@@ -53,6 +53,7 @@ export function Thumbnail({
           alt=""
           loading="lazy"
           decoding="async"
+          draggable={false}
           onLoad={(e) => void locateSubject(e.currentTarget)}
           onError={() => setFailedSrc(src)}
           style={{ objectPosition: position }}

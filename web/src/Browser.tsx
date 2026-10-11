@@ -163,6 +163,21 @@ function loadSettings(): Settings {
 
 type ClickIntent = 'replace' | 'toggle' | 'range'
 
+type Screen = 'files' | 'trash' | 'shared' | 'shared-with-me' | 'members' | 'settings' | 'activity'
+
+const SCREENS: readonly string[] = [
+  'files', 'trash', 'shared', 'shared-with-me', 'members', 'settings', 'activity',
+]
+
+function parseLocation(): { screen: Screen; path: string | null } {
+  const q = new URLSearchParams(window.location.search)
+  const p = q.get('path')
+  if (p && p.startsWith('/')) return { screen: 'files', path: p }
+  const s = q.get('screen')
+  if (s && (SCREENS as readonly string[]).includes(s)) return { screen: s as Screen, path: null }
+  return { screen: 'files', path: null }
+}
+
 type EntryActions = {
   select: (entry: Entry, intent: ClickIntent) => void
   open: (entry: Entry) => void
@@ -245,7 +260,8 @@ type DialogState =
 
 export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
   const homePath = user.is_admin ? '/' : `/members/${user.username}`
-  const [path, setPath] = useState(() => homePath)
+  const [initialLocation] = useState(parseLocation)
+  const [path, setPath] = useState(() => initialLocation.path ?? homePath)
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -263,9 +279,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [selection, setSelection] = useState<Set<string>>(() => new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
-  const [screen, setScreen] = useState<
-    'files' | 'trash' | 'shared' | 'shared-with-me' | 'members' | 'settings' | 'activity'
-  >('files')
+  const [screen, setScreen] = useState<Screen>(() => initialLocation.screen)
   const [preview, setPreview] = useState<Entry | null>(null)
   const [inlinePreview, setInlinePreview] = useState(false)
   const [version, setVersion] = useState('')
@@ -340,6 +354,38 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     clearSelection()
     setPreview(null)
   }, [path, load, clearSelection])
+
+  const firstLocation = useRef(true)
+  useEffect(() => {
+    const want = screen === 'files' ? `?path=${encodeURIComponent(path)}` : `?screen=${screen}`
+    if (window.location.search === want) {
+      firstLocation.current = false
+      return
+    }
+    if (firstLocation.current) {
+      firstLocation.current = false
+      window.history.replaceState(null, '', want)
+    } else {
+      window.history.pushState(null, '', want)
+    }
+  }, [screen, path])
+
+  useEffect(() => {
+    function onPop() {
+      const loc = parseLocation()
+      setQuery('')
+      setPreview(null)
+      clearSelection()
+      if (loc.screen === 'files') {
+        setScreen('files')
+        if (loc.path) setPath(loc.path)
+      } else {
+        setScreen(loc.screen)
+      }
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [clearSelection])
 
   useEffect(() => {
     void refreshSpace()
@@ -746,8 +792,24 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     function onKey(e: KeyboardEvent) {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+      if (dialog || preview) return
       if (e.key === 'Escape' && clipboard) {
         setClipboard(null)
+        return
+      }
+      if (e.key === 'F2' && selected.length === 1) {
+        const target = selected[0]!
+        if (perms.write && perms.delete && !isMembersTop(target.path)) {
+          e.preventDefault()
+          setDialog({ kind: 'rename', entry: target })
+        }
+        return
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selected.length > 0) {
+        if (perms.delete && !selected.some((en) => isMembersTop(en.path))) {
+          e.preventDefault()
+          setDialog({ kind: 'delete', entries: selected })
+        }
         return
       }
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
@@ -766,7 +828,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [screen, selected, clipboard, doPaste])
+  }, [screen, selected, clipboard, doPaste, dialog, preview, perms])
 
   // Follow background copies: while any job is unfinished, poll each until it
   // settles, then refresh the listing on success or report the failure. The
@@ -1128,6 +1190,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
             setPath(p)
             setQuery('')
           }}
+          actions={actions}
         />
 
         {error && (
@@ -1476,7 +1539,17 @@ function DisplayOptions({
   )
 }
 
-function Breadcrumb({ path, home, onNavigate }: { path: string; home: string; onNavigate: (p: string) => void }) {
+function Breadcrumb({
+  path,
+  home,
+  onNavigate,
+  actions,
+}: {
+  path: string
+  home: string
+  onNavigate: (p: string) => void
+  actions: EntryActions
+}) {
   const inHome = path === home || (home !== '/' && path.startsWith(home + '/'))
   const relative = inHome ? path.slice(home.length) : path
   const segments = relative === '' || relative === '/' ? [] : relative.replace(/^\//, '').split('/')
@@ -1484,9 +1557,42 @@ function Breadcrumb({ path, home, onNavigate }: { path: string; home: string; on
     inHome ? home + '/' + segments.slice(0, index + 1).join('/') : '/' + segments.slice(0, index + 1).join('/')
   const upTarget = parentOf(path)
   const showUp = path !== home && !(upTarget === '/' && home !== '/')
+  const dropFor = (target: string, name: string) => ({
+    onDragOver: (e: DragEvent) => {
+      if (!e.dataTransfer.types.includes(MOVE_MIME)) return
+      if (target === '/members') return
+      e.preventDefault()
+      e.stopPropagation()
+      e.dataTransfer.dropEffect = 'move'
+      if (actions.dropTarget !== target) actions.setDropTarget(target)
+    },
+    onDragLeave: () => {
+      if (actions.dropTarget === target) actions.setDropTarget(null)
+    },
+    onDrop: (e: DragEvent) => {
+      const raw = e.dataTransfer.getData(MOVE_MIME)
+      if (!raw) return
+      e.preventDefault()
+      e.stopPropagation()
+      actions.setDropTarget(null)
+      try {
+        actions.moveInto(target, name, JSON.parse(raw) as string[])
+      } catch {
+        // A malformed payload is not something to act on.
+      }
+    },
+  })
+  const highlight = (target: string) =>
+    actions.dropTarget === target ? 'bg-primary/15 ring-2 ring-primary' : ''
   return (
     <nav aria-label="Location" className="flex items-center gap-0.5 px-3 py-1.5">
-      <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => onNavigate(home)}>
+      <Button
+        variant="ghost"
+        size="sm"
+        className={`gap-1.5 ${highlight(home)}`}
+        onClick={() => onNavigate(home)}
+        {...(path === home ? {} : dropFor(home, 'Home'))}
+      >
         <House className="size-4" aria-hidden />
         Home
       </Button>
@@ -1495,7 +1601,13 @@ function Breadcrumb({ path, home, onNavigate }: { path: string; home: string; on
         return (
           <div key={target} className="flex items-center gap-0.5">
             <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
-            <Button variant="ghost" size="sm" onClick={() => onNavigate(target)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className={highlight(target)}
+              onClick={() => onNavigate(target)}
+              {...(target === path ? {} : dropFor(target, segment))}
+            >
               {segment}
             </Button>
           </div>
@@ -1616,12 +1728,14 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
           <ContextMenuItem onSelect={() => actions.rename(entry)}>
             <Pencil />
             Rename
+            <ContextMenuShortcut>F2</ContextMenuShortcut>
           </ContextMenuItem>
         )}
         {remove && (
           <ContextMenuItem variant="destructive" onSelect={() => actions.remove(entry)}>
             <Trash2 />
             Delete
+            <ContextMenuShortcut>Del</ContextMenuShortcut>
           </ContextMenuItem>
         )}
       </ContextMenuContent>
@@ -2054,8 +2168,16 @@ function DeleteDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            {many ? `Move ${entries.length} items to trash?` : `Move “${entries[0]!.name}” to trash?`}
+            {many ? `Move ${entries.length} items to trash?` : 'Move to trash?'}
           </AlertDialogTitle>
+          {!many && (
+            <p
+              className="truncate text-sm font-normal text-muted-foreground"
+              title={entries[0]!.name}
+            >
+              “{entries[0]!.name}”
+            </p>
+          )}
           <AlertDialogDescription>
             {hasFolder
               ? 'The folders and everything inside go to the trash. You can restore them from there, or empty the trash to remove them for good.'
