@@ -75,6 +75,28 @@ it is configured at runtime under **Settings → Retention** (admin). See the
 [audit log](/features/audit-log).
 :::
 
+## Object storage
+
+*Optional.* Set `ZEFILE_STORAGE_BACKEND=s3` to store files in S3-compatible
+object storage (AWS S3, Backblaze B2, Cloudflare R2, MinIO) instead of
+`ZEFILE_DATA_DIR`. `ZEFILE_S3_BUCKET` and `ZEFILE_S3_REGION` are required in
+this mode; `ZEFILE_S3_ENDPOINT` addresses a non-AWS provider, and
+`ZEFILE_S3_ACCESS_KEY_ID` / `ZEFILE_S3_SECRET_ACCESS_KEY` carry static
+credentials (unset means the ambient AWS chain). `ZEFILE_S3_PREFIX` scopes the
+tree inside the bucket, `ZEFILE_S3_FORCE_PATH_STYLE` switches to path-style
+addressing, `ZEFILE_S3_PUBLIC_ENDPOINT` is the bucket's address as clients see
+it (for presigned URLs), `ZEFILE_S3_PART_SIZE` is the multipart part length
+(default 16 MiB, min 5 MiB), and `ZEFILE_S3_PRESIGN_TTL` bounds minted
+capability URLs (default 15 min).
+
+### `ZEFILE_S3_META_TTL`
+
+*Optional, default `1m`.* How long directory listings and file stats are served
+from the metadata cache before one S3 request revalidates them. Changes made
+through the app invalidate immediately; the TTL only bounds how stale rows for
+changes made outside the app can get. Accepts a Go duration (`30s`, `5m`);
+`0` disables expiry-based revalidation.
+
 ## Server
 
 ### `ZEFILE_LISTEN`

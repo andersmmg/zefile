@@ -29,6 +29,7 @@ import (
 	"github.com/krishna2206/zefile/internal/fetch"
 	"github.com/krishna2206/zefile/internal/geoip"
 	"github.com/krishna2206/zefile/internal/job"
+	"github.com/krishna2206/zefile/internal/metacache"
 	"github.com/krishna2206/zefile/internal/quota"
 	"github.com/krishna2206/zefile/internal/settings"
 	"github.com/krishna2206/zefile/internal/share"
@@ -170,6 +171,9 @@ func run() error {
 	var fs storage.FS
 	switch cfg.Backend {
 	case config.BackendS3:
+		// The metadata cache mirrors S3 listings in SQLite so browsing a
+		// bucket does not cost a round trip per file. Mutations maintain
+		// it; S3 stays the source of truth.
 		fs, err = storage.OpenS3(storage.S3Config{
 			Endpoint:        cfg.S3.Endpoint,
 			Region:          cfg.S3.Region,
@@ -183,6 +187,7 @@ func run() error {
 			PresignTTL:      cfg.S3.PresignTTL,
 			Guard:           engine,
 			ReadOnly:        cfg.ReadOnly,
+			MetaCache:       metacache.New(database.Write, cfg.S3.MetaTTL),
 		})
 	default:
 		fs, err = storage.Open(storage.Config{

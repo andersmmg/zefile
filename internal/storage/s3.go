@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -62,6 +63,11 @@ type S3Config struct {
 
 	// ReadOnly refuses every write regardless of anything else.
 	ReadOnly bool
+
+	// MetaCache mirrors object metadata so listings and stats skip
+	// per-file round trips. Nil disables the cache; every operation
+	// then talks to S3 directly. See [MetaCache].
+	MetaCache MetaCache
 }
 
 // S3 is an [FS] backed by an S3-compatible object store.
@@ -75,6 +81,7 @@ type S3 struct {
 	readOnly   bool
 	partSize   int64
 	presignTTL time.Duration
+	meta       MetaCache // nil means uncached
 }
 
 var _ FS = (*S3)(nil)
@@ -115,6 +122,7 @@ func OpenS3(cfg S3Config) (*S3, error) {
 		readOnly:   cfg.ReadOnly,
 		partSize:   partSize,
 		presignTTL: presignTTL,
+		meta:       cfg.MetaCache,
 	}
 	if cfg.PublicEndpoint != "" && cfg.PublicEndpoint != cfg.Endpoint {
 		// Capability URLs must resolve where the client runs.
@@ -160,7 +168,8 @@ func (s *S3) Close() error { return nil }
 
 // ------------------------------------------------------------------ read path
 
-// Stat implements [FS].
+// Stat implements [FS]. A fresh cache row answers without a round trip;
+// otherwise one probe serves the answer and refreshes the row.
 func (s *S3) Stat(ctx context.Context, p Path) (FileInfo, error) {
 	if err := authorize(ctx, s.guard, OpRead, p); err != nil {
 		return FileInfo{}, err
@@ -169,11 +178,26 @@ func (s *S3) Stat(ctx context.Context, p Path) (FileInfo, error) {
 		return FileInfo{Path: p, Name: p.Name(), IsDir: true}, nil
 	}
 
+	now := time.Now()
+	if s.meta != nil {
+		if e, err := s.meta.Hit(ctx, p, now); err == nil {
+			return FileInfo{
+				Path:    p,
+				Name:    p.Name(),
+				Size:    e.Size,
+				ModTime: e.ModTime,
+				IsDir:   e.IsDir,
+			}, nil
+		}
+		// Any cache miss or error falls through to the store.
+	}
+
 	file, dir, err := s.probePath(ctx, p)
 	if err != nil {
 		return FileInfo{}, err
 	}
 	if file.found {
+		s.metaStore(ctx, p, MetaEntry{Size: file.size, ModTime: file.modTime, CachedAt: now})
 		return FileInfo{
 			Path:    p,
 			Name:    p.Name(),
@@ -183,16 +207,31 @@ func (s *S3) Stat(ctx context.Context, p Path) (FileInfo, error) {
 		}, nil
 	}
 	if !dir.found {
+		// The store is truth: drop any row for a path deleted outside
+		// the app so it cannot linger past this miss.
+		s.metaForget(ctx, p)
 		return FileInfo{}, ErrNotExist
 	}
+	s.metaStore(ctx, p, MetaEntry{ModTime: dir.modTime, IsDir: true, CachedAt: now})
 	return FileInfo{Path: p, Name: p.Name(), ModTime: dir.modTime, IsDir: true}, nil
 }
 
-// List implements [FS].
+// List implements [FS]. A fresh cached listing answers without any round
+// trip; otherwise one listing serves the answer and refreshes the cache.
+// Cached rows are unfiltered — per-user permission filtering runs on every
+// serve, exactly as for a live listing.
 func (s *S3) List(ctx context.Context, p Path) ([]FileInfo, error) {
 	traverse, err := authorizeList(ctx, s.guard, p)
 	if err != nil {
 		return nil, err
+	}
+
+	now := time.Now()
+	if s.meta != nil {
+		if kids, err := s.meta.ChildrenHit(ctx, p, now); err == nil {
+			return s.filterCached(ctx, p, kids, traverse)
+		}
+		// Any cache miss or error falls through to the store.
 	}
 
 	if !p.IsRoot() {
@@ -204,6 +243,7 @@ func (s *S3) List(ctx context.Context, p Path) ([]FileInfo, error) {
 			return nil, ErrNotDir
 		}
 		if !dir.found {
+			s.metaForget(ctx, p)
 			return nil, ErrNotExist
 		}
 	}
@@ -212,10 +252,98 @@ func (s *S3) List(ctx context.Context, p Path) ([]FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.metaReplaceDir(ctx, p, entries, now)
 	if traverse {
 		return filterVisible(ctx, s.guard.(ListGuard), entries)
 	}
 	return filterReadable(ctx, s.guard, entries)
+}
+
+// filterCached serves a cached listing through the same permission filters
+// as a live one. Map order is random, so entries are sorted by name for a
+// stable order.
+func (s *S3) filterCached(ctx context.Context, p Path, kids map[string]MetaEntry, traverse bool) ([]FileInfo, error) {
+	names := make([]string, 0, len(kids))
+	for name := range kids {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	entries := make([]FileInfo, 0, len(kids))
+	for _, name := range names {
+		e := kids[name]
+		child, err := p.Child(name)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, FileInfo{
+			Path:    child,
+			Name:    name,
+			Size:    e.Size,
+			ModTime: e.ModTime,
+			IsDir:   e.IsDir,
+		})
+	}
+	if traverse {
+		return filterVisible(ctx, s.guard.(ListGuard), entries)
+	}
+	return filterReadable(ctx, s.guard, entries)
+}
+
+// The meta* helpers maintain the metadata cache best-effort: a cache write
+// must never fail an operation the store itself accepted, so errors are
+// dropped. A missed invalidation only costs a re-list — rows are never
+// served past their TTL or without a fresh listing stamp.
+func (s *S3) metaStore(ctx context.Context, p Path, e MetaEntry) {
+	if s.meta == nil {
+		return
+	}
+	if e.CachedAt.IsZero() {
+		e.CachedAt = time.Now()
+	}
+	_ = s.meta.Store(ctx, p, e)
+}
+
+func (s *S3) metaReplaceDir(ctx context.Context, dir Path, entries []FileInfo, now time.Time) {
+	if s.meta == nil {
+		return
+	}
+	kids := make(map[string]MetaEntry, len(entries))
+	for _, e := range entries {
+		kids[e.Name] = MetaEntry{Size: e.Size, ModTime: e.ModTime, IsDir: e.IsDir, CachedAt: now}
+	}
+	_ = s.meta.ReplaceDir(ctx, dir, kids, now)
+}
+
+func (s *S3) metaForget(ctx context.Context, p Path) {
+	if s.meta == nil {
+		return
+	}
+	_ = s.meta.Forget(ctx, p)
+}
+
+func (s *S3) metaInvalidateDir(ctx context.Context, dir Path) {
+	if s.meta == nil {
+		return
+	}
+	_ = s.meta.InvalidateDir(ctx, dir)
+}
+
+// metaInvalidateAncestors drops the listing stamps from p up to the root,
+// after an operation changed entries at several levels at once.
+func (s *S3) metaInvalidateAncestors(ctx context.Context, p Path) {
+	if s.meta == nil {
+		return
+	}
+	for d := p; !d.IsRoot(); d = d.Parent() {
+		_ = s.meta.InvalidateDir(ctx, d.Parent())
+	}
+}
+
+func (s *S3) metaRelocate(ctx context.Context, from, to Path) {
+	if s.meta == nil {
+		return
+	}
+	_ = s.meta.Relocate(ctx, from, to)
 }
 
 // listChildren lists one directory level, following pagination.
@@ -310,7 +438,12 @@ func (s *S3) Mkdir(ctx context.Context, p Path) error {
 	if taken {
 		return ErrExist
 	}
-	return s.putMarker(ctx, s.dirPrefix(p))
+	if err := s.putMarker(ctx, s.dirPrefix(p)); err != nil {
+		return err
+	}
+	s.metaStore(ctx, p, MetaEntry{ModTime: time.Now(), IsDir: true})
+	s.metaInvalidateDir(ctx, p.Parent())
+	return nil
 }
 
 // MkdirAll implements [FS], creating missing ancestors as markers.
@@ -350,6 +483,8 @@ func (s *S3) MkdirAll(ctx context.Context, p Path) error {
 			}
 		}
 	}
+	s.metaStore(ctx, p, MetaEntry{ModTime: time.Now(), IsDir: true})
+	s.metaInvalidateAncestors(ctx, p)
 	return nil
 }
 

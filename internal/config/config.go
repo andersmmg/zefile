@@ -45,6 +45,7 @@ const (
 	EnvS3ForcePathStyle  = "ZEFILE_S3_FORCE_PATH_STYLE"
 	EnvS3PartSize        = "ZEFILE_S3_PART_SIZE"
 	EnvS3PresignTTL      = "ZEFILE_S3_PRESIGN_TTL"
+	EnvS3MetaTTL         = "ZEFILE_S3_META_TTL"
 	EnvS3PublicEndpoint  = "ZEFILE_S3_PUBLIC_ENDPOINT"
 )
 
@@ -71,6 +72,12 @@ const (
 	// DefaultS3PresignTTL is how long minted capability URLs stay valid when
 	// ZEFILE_S3_PRESIGN_TTL is unset.
 	DefaultS3PresignTTL = 15 * time.Minute
+
+	// DefaultS3MetaTTL is how long S3 metadata rows are served from the
+	// cache when ZEFILE_S3_META_TTL is unset. Mutations the app makes
+	// invalidate immediately; the TTL only bounds how stale rows for
+	// changes made outside the app can get.
+	DefaultS3MetaTTL = time.Minute
 
 	// DefaultPreviewMaxBytes applies when ZEFILE_PREVIEW_MAX_BYTES is
 	// unset. It mirrors the api default.
@@ -162,6 +169,10 @@ type S3Settings struct {
 
 	// PresignTTL is how long minted capability URLs stay valid.
 	PresignTTL time.Duration
+
+	// MetaTTL bounds cached S3 metadata. Zero disables expiry-based
+	// revalidation (mutations still invalidate). Negative is rejected.
+	MetaTTL time.Duration
 }
 
 // SecureCookies reports whether session cookies may carry the Secure attribute.
@@ -278,7 +289,7 @@ func StorageBackend() (string, error) {
 
 // loadS3 reads and validates the object-storage settings at startup.
 func loadS3() (S3Settings, error) {
-	s := S3Settings{PartSize: DefaultS3PartSize, PresignTTL: DefaultS3PresignTTL}
+	s := S3Settings{PartSize: DefaultS3PartSize, PresignTTL: DefaultS3PresignTTL, MetaTTL: DefaultS3MetaTTL}
 	s.Endpoint = strings.TrimSpace(os.Getenv(EnvS3Endpoint))
 	s.Region = strings.TrimSpace(os.Getenv(EnvS3Region))
 	s.Bucket = strings.TrimSpace(os.Getenv(EnvS3Bucket))
@@ -341,6 +352,14 @@ func loadS3() (S3Settings, error) {
 				EnvS3PresignTTL, raw)
 		}
 		s.PresignTTL = d
+	}
+	if raw := strings.TrimSpace(os.Getenv(EnvS3MetaTTL)); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d < 0 {
+			return S3Settings{}, fmt.Errorf("config: %s must be a duration like 1m (0 disables expiry), got %q",
+				EnvS3MetaTTL, raw)
+		}
+		s.MetaTTL = d
 	}
 	return s, nil
 }

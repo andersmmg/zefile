@@ -350,6 +350,9 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   }, [])
 
   useEffect(() => {
+    // Navigating shows the spinner, never the previous folder: same-folder
+    // refreshes stay silent and update in place (see load's silent mode).
+    setEntries([])
     void load(path)
     clearSelection()
     setPreview(null)
@@ -676,6 +679,14 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         (p) => p !== dirPath && parentOf(p) !== dirPath && !dirPath.startsWith(p + '/'),
       )
       if (targets.length === 0) return
+      // The moved items leave this folder at once; the silent refresh
+      // reconciles whatever the server reports.
+      const gone = new Set(targets)
+      setEntries((cur) => cur.filter((e) => !gone.has(e.path)))
+      clearSelection()
+      const pending = toast.loading(
+        targets.length > 1 ? `Moving ${targets.length} items…` : 'Moving…',
+      )
       let done = 0
       for (const p of targets) {
         const name = p.slice(p.lastIndexOf('/') + 1)
@@ -686,11 +697,14 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           toast.error(err instanceof ApiError ? err.message : `Could not move “${name}”`)
         }
       }
-      clearSelection()
-      void load(path)
+      void load(path, { silent: true })
       void refreshSpace()
       if (done > 0) {
-        toast.success(done > 1 ? `Moved ${done} items to “${dirName}”` : `Moved to “${dirName}”`)
+        toast.success(done > 1 ? `Moved ${done} items to “${dirName}”` : `Moved to “${dirName}”`, {
+          id: pending,
+        })
+      } else {
+        toast.dismiss(pending)
       }
     },
     [path, clearSelection, load, refreshSpace],
@@ -744,13 +758,40 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       toast.error('The members folder is managed automatically.')
       return
     }
+    // Plan every name up front so the optimistic rows match what the server
+    // creates. Moving an entry into the folder it already sits in is a no-op.
     const taken = new Set(entries.map((e) => e.name))
-    let done = 0
-    let queued = 0
+    const plan: { entry: Entry; name: string }[] = []
     for (const entry of clipboard.entries) {
-      // Moving an entry into the folder it already sits in is a no-op.
       if (clipboard.mode === 'cut' && parentOf(entry.path) === path) continue
       const name = freeName(entry.name, taken)
+      taken.add(name)
+      plan.push({ entry, name })
+    }
+    if (plan.length === 0) {
+      setClipboard(null)
+      return
+    }
+    // The pasted rows appear at once with the source's metadata, and cut
+    // entries leave this folder at once; the silent refresh reconciles
+    // sizes, times and failures.
+    const dests = new Map(plan.map(({ entry, name }) => [entry.path, joinPath(path, name)]))
+    setEntries((cur) => {
+      const kept = clipboard.mode === 'cut' ? cur.filter((e) => !dests.has(e.path)) : cur
+      return [
+        ...kept,
+        ...plan.map(({ entry, name }) => ({ ...entry, path: dests.get(entry.path)!, name })),
+      ]
+    })
+    clearSelection()
+    const pending = toast.loading(
+      clipboard.mode === 'copy'
+        ? `Copying ${plan.length > 1 ? `${plan.length} items` : `“${plan[0]!.name}”`}…`
+        : `Moving ${plan.length > 1 ? `${plan.length} items` : `“${plan[0]!.name}”`}…`,
+    )
+    let done = 0
+    let queued = 0
+    for (const { entry, name } of plan) {
       try {
         if (clipboard.mode === 'copy') {
           const res = await api.copy(entry.path, joinPath(path, name))
@@ -769,21 +810,24 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           await api.move(entry.path, joinPath(path, name))
           done++
         }
-        taken.add(name)
       } catch (err) {
         toast.error(err instanceof ApiError ? err.message : `Could not paste “${entry.name}”`)
       }
     }
     setClipboard(null)
-    clearSelection()
-    void load(path)
+    void load(path, { silent: true })
     void refreshSpace()
     if (done > 0) {
       const verb = clipboard.mode === 'copy' ? 'Copied' : 'Moved'
-      toast.success(done > 1 ? `${verb} ${done} items` : `${verb} “${clipboard.entries[0]!.name}”`)
-    }
-    if (queued > 0) {
-      toast(queued > 1 ? `Copying ${queued} items in the background…` : 'Copying in the background…')
+      toast.success(done > 1 ? `${verb} ${done} items` : `${verb} “${plan[0]!.name}”`, {
+        id: pending,
+      })
+    } else if (queued > 0) {
+      toast(queued > 1 ? `Copying ${queued} items in the background…` : 'Copying in the background…',
+        { id: pending },
+      )
+    } else {
+      toast.dismiss(pending)
     }
   }, [clipboard, entries, path, clearSelection, load, refreshSpace])
 
@@ -886,8 +930,19 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   }, [hasActiveJobs, load, refreshSpace])
 
   async function createFolder(name: string) {
-    await api.mkdir(joinPath(path, name))
-    void load(path)
+    const folderPath = joinPath(path, name)
+    // The folder appears at once; the silent refresh fills in the details.
+    // A failure propagates to the dialog, which shows it inline — the
+    // refresh in the finally rolls the optimistic row back out.
+    setEntries((cur) => [
+      ...cur,
+      { path: folderPath, name, size: 0, mod_time: new Date().toISOString(), is_dir: true },
+    ])
+    try {
+      await api.mkdir(folderPath)
+    } finally {
+      void load(path, { silent: true })
+    }
     toast.success(`Folder “${name}” created`)
   }
 
@@ -924,13 +979,25 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const jobCancel = (id: number) => void patchJob(id, api.cancelJob)
 
   async function renameEntry(entry: Entry, name: string) {
-    await api.move(entry.path, joinPath(parentOf(entry.path), name))
-    void load(path)
+    const to = joinPath(parentOf(entry.path), name)
+    // The new name shows at once; the silent refresh reconciles (and fixes
+    // child paths when a folder moved). A failure reloads the truth.
+    setEntries((cur) => cur.map((e) => (e.path === entry.path ? { ...e, path: to, name } : e)))
     clearSelection()
+    try {
+      await api.move(entry.path, to)
+    } finally {
+      void load(path, { silent: true })
+    }
     toast.success(`Renamed to “${name}”`)
   }
 
   async function deleteEntries(list: Entry[]) {
+    // Deleted rows vanish at once instead of flashing through a spinner; the
+    // silent refresh brings back anything the server refused to delete.
+    const gone = new Set(list.map((e) => e.path))
+    setEntries((cur) => cur.filter((e) => !gone.has(e.path)))
+    clearSelection()
     let done = 0
     for (const entry of list) {
       try {
@@ -940,8 +1007,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         toast.error(err instanceof ApiError ? err.message : `Could not delete “${entry.name}”`)
       }
     }
-    clearSelection()
-    void load(path)
+    void load(path, { silent: true })
     void refreshSpace()
     if (done > 0) {
       toast.success(done > 1 ? `${done} items moved to trash` : `“${list[0]!.name}” moved to trash`)
@@ -967,7 +1033,11 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   // empty-area create menu depending on whether the caller can write here.
   const browseArea = (
     <div className="min-h-0 flex-1">
-      {loading || (inSearch && searchResults === null) ? (
+      {loading && entries.length === 0 ? (
+        <div className="grid h-full place-items-center">
+          <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+        </div>
+      ) : inSearch && searchResults === null ? (
         <div className="grid h-full place-items-center">
           <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
         </div>
@@ -1407,6 +1477,19 @@ function intentOf(e: MouseEvent): ClickIntent {
 }
 
 /**
+ * clearUnlessEntry clears the selection for clicks on empty space: anything
+ * inside the listing that is not part of an entry tile/row and not an
+ * interactive control (sort headers, buttons). The old target-is-container
+ * check only caught clicks on the bare scroll container, so gaps between
+ * tiles never deselected.
+ */
+function clearUnlessEntry(e: MouseEvent, onClearSelection: () => void) {
+  const el = e.target instanceof Element ? e.target : null
+  if (el?.closest('[data-entry-path], button, a, input, textarea, select')) return
+  onClearSelection()
+}
+
+/**
  * moveDragProps builds the drag-and-drop handlers a row or tile needs to move
  * files in-app: any entry can be picked up, and a folder accepts a drop. The
  * MOVE_MIME payload marks the drag as an internal move so it never triggers the
@@ -1781,7 +1864,7 @@ function ListView({ rows, sort, onSort, actions, onClearSelection, showLocation 
     <div
       ref={viewport}
       className="h-full overflow-auto"
-      onClick={(e) => e.target === e.currentTarget && onClearSelection()}
+      onClick={(e) => clearUnlessEntry(e, onClearSelection)}
     >
       <div className={`${listGrid} sticky top-0 z-10 border-b bg-background px-4 py-2 text-xs font-medium text-muted-foreground`}>
         <span />
@@ -1855,6 +1938,7 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
         role="button"
         tabIndex={0}
         aria-selected={selected}
+        data-entry-path={entry.path}
         className={`group ${listGrid} h-12 cursor-default border-b border-border/60 px-4 outline-none select-none ${
           isTarget
             ? 'bg-primary/15 ring-2 ring-inset ring-primary'
@@ -1958,7 +2042,7 @@ function GridView({
   return (
     <div
       className="h-full overflow-auto p-4"
-      onClick={(e) => e.target === e.currentTarget && onClearSelection()}
+      onClick={(e) => clearUnlessEntry(e, onClearSelection)}
     >
       {groups.map((g) => (
         <section key={g.key} className="mb-4">
@@ -1993,6 +2077,7 @@ function GridTile({ entry, actions, size, showLocation }: { entry: Entry; action
         role="button"
         tabIndex={0}
         aria-selected={selected}
+        data-entry-path={entry.path}
         className={`flex cursor-default flex-col gap-2 rounded-lg border p-2 text-center outline-none select-none ${
           isTarget
             ? 'border-primary bg-primary/15 ring-2 ring-primary'

@@ -40,11 +40,17 @@ type Querier interface {
 	// addresses, so keeping it bounded is a privacy measure, not only housekeeping.
 	DeleteAuditEntriesBefore(ctx context.Context, at int64) (int64, error)
 	DeleteExpiredSessions(ctx context.Context, expiresAt int64) error
+	DeleteFileMetaChildren(ctx context.Context, parent string) error
+	// Drops a path and everything beneath it, using a prefix comparison rather
+	// than LIKE so names holding % or _ need no escaping.
+	DeleteFileMetaSubtree(ctx context.Context, path string) error
 	DeleteFileOwner(ctx context.Context, path string) error
 	DeleteGroup(ctx context.Context, id int64) (int64, error)
 	// Only an unused, real invitation can be revoked; a used one has already become
 	// an account, and a setup token is not an admin's to cancel.
 	DeleteInvitationByID(ctx context.Context, id int64) (int64, error)
+	DeleteMetaSync(ctx context.Context, path string) error
+	DeleteMetaSyncSubtree(ctx context.Context, path string) error
 	// Regenerating replaces the whole set, so the old codes are cleared first.
 	DeleteRecoveryCodesForUser(ctx context.Context, userID int64) error
 	DeleteTrash(ctx context.Context, id int64) error
@@ -61,6 +67,7 @@ type Querier interface {
 	// expires_at means the token never expires.
 	GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashParams) (GetAPITokenByHashRow, error)
 	GetChecksum(ctx context.Context, path string) (Checksum, error)
+	GetFileMeta(ctx context.Context, path string) (FileCache, error)
 	GetFileOwner(ctx context.Context, path string) (FileOwner, error)
 	// Batched so that listing a directory costs one query rather than one per entry.
 	GetFileOwnersForPaths(ctx context.Context, paths []string) ([]FileOwner, error)
@@ -68,6 +75,7 @@ type Querier interface {
 	// accept an invitation twice.
 	GetInvitationByTokenHash(ctx context.Context, arg GetInvitationByTokenHashParams) (Invitation, error)
 	GetJob(ctx context.Context, id int64) (Job, error)
+	GetMetaSync(ctx context.Context, path string) (MetaSync, error)
 	// The lookup performed on every authenticated request. Expiry and revocation
 	// are filtered here rather than in Go: a caller that forgets the check must not
 	// be able to resurrect a dead session.
@@ -98,6 +106,7 @@ type Querier interface {
 	// was since deleted, which the entry still records by id and ip.
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	ListExpiredUploads(ctx context.Context, expiresAt int64) ([]Upload, error)
+	ListFileMetaChildren(ctx context.Context, parent string) ([]FileCache, error)
 	// The whole ownership map, so usage can be attributed in one pass over a
 	// single tree walk rather than one query per file.
 	ListFileOwners(ctx context.Context) ([]FileOwner, error)
@@ -130,9 +139,15 @@ type Querier interface {
 	// stranded on a name that no longer exists. The substr comparison avoids LIKE,
 	// whose wildcards a path containing '%' or '_' would trip.
 	MoveACLSubtree(ctx context.Context, arg MoveACLSubtreeParams) error
+	// Follows a rename across a whole subtree in one statement. Only rows at or
+	// beneath the source move; the moved directory's own parent is untouched.
+	MoveFileMetaSubtree(ctx context.Context, arg MoveFileMetaSubtreeParams) error
 	// Follows a rename across a whole subtree, so a moved folder keeps ownership of
 	// everything inside it, not only its own row.
 	MoveFileOwner(ctx context.Context, arg MoveFileOwnerParams) error
+	// Follows a rename like MoveFileMetaSubtree, so a moved directory keeps
+	// its fresh listing instead of paying a re-list on next open.
+	MoveMetaSyncSubtree(ctx context.Context, arg MoveMetaSyncSubtreeParams) error
 	RemoveGroupMember(ctx context.Context, arg RemoveGroupMemberParams) error
 	// A job left 'running' by a crash is reset so the worker picks it up again on
 	// the next start; its own idempotent construction makes the retry safe.
@@ -151,6 +166,7 @@ type Querier interface {
 	RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (int64, error)
 	RevokeShare(ctx context.Context, arg RevokeShareParams) (int64, error)
 	SetFileOwner(ctx context.Context, arg SetFileOwnerParams) error
+	SetMetaSync(ctx context.Context, arg SetMetaSyncParams) error
 	// Sets or clears (NULL) the TOTP secret. A non-NULL secret means two-factor
 	// authentication is enabled for the account.
 	SetTOTPSecret(ctx context.Context, arg SetTOTPSecretParams) error
@@ -167,6 +183,7 @@ type Querier interface {
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpsertACL(ctx context.Context, arg UpsertACLParams) (Acl, error)
 	UpsertChecksum(ctx context.Context, arg UpsertChecksumParams) error
+	UpsertFileMeta(ctx context.Context, arg UpsertFileMetaParams) error
 	UpsertSetting(ctx context.Context, arg UpsertSettingParams) error
 }
 

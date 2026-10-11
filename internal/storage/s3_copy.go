@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -103,7 +104,12 @@ func (s *S3) Copy(ctx context.Context, from, to Path) error {
 	if err := s.copyKey(ctx, s.key(from), s.key(to)); err != nil {
 		return err
 	}
-	return s.verifyCopy(ctx, s.key(to), info.Size)
+	if err := s.verifyCopy(ctx, s.key(to), info.Size); err != nil {
+		return err
+	}
+	s.metaStore(ctx, to, MetaEntry{Size: info.Size, ModTime: info.ModTime})
+	s.metaInvalidateDir(ctx, to.Parent())
+	return nil
 }
 
 // CopyTree implements [TreeCopier]. It runs in the job worker, never in a
@@ -151,6 +157,8 @@ func (s *S3) CopyTree(ctx context.Context, from, to Path, progress func(done, to
 		if err := s.verifyCopy(ctx, s.key(to), info.Size); err != nil {
 			return err
 		}
+		s.metaStore(ctx, to, MetaEntry{Size: info.Size, ModTime: info.ModTime})
+		s.metaInvalidateDir(ctx, to.Parent())
 		report(info.Size, info.Size)
 		return nil
 	}
@@ -171,7 +179,12 @@ func (s *S3) CopyTree(ctx context.Context, from, to Path, progress func(done, to
 	if err := s.copyObjects(ctx, objects, srcPrefix, dstPrefix, report); err != nil {
 		return err
 	}
-	return s.verifyTree(ctx, dstPrefix, want)
+	if err := s.verifyTree(ctx, dstPrefix, want); err != nil {
+		return err
+	}
+	s.metaStore(ctx, to, MetaEntry{ModTime: time.Now(), IsDir: true})
+	s.metaInvalidateAncestors(ctx, to)
+	return nil
 }
 
 func (s *S3) copyObjects(ctx context.Context, objects []listedObject, srcPrefix, dstPrefix string, report func(done, total int64)) error {
@@ -290,7 +303,11 @@ func (s *S3) Move(ctx context.Context, from, to Path) error {
 			Bucket: aws.String(s.bucket),
 			Key:    aws.String(s.key(from)),
 		})
-		return mapS3Err(err)
+		if err := mapS3Err(err); err != nil {
+			return err
+		}
+		s.metaRelocate(ctx, from, to)
+		return nil
 	}
 
 	srcPrefix, dstPrefix := s.dirPrefix(from), s.dirPrefix(to)
@@ -299,7 +316,11 @@ func (s *S3) Move(ctx context.Context, from, to Path) error {
 		return err
 	}
 	if len(objects) == 0 {
-		return s.putMarker(ctx, dstPrefix)
+		if err := s.putMarker(ctx, dstPrefix); err != nil {
+			return err
+		}
+		s.metaRelocate(ctx, from, to)
+		return nil
 	}
 	srcKeys := make([]string, 0, len(objects))
 	want := make(map[string]struct{}, len(objects))
@@ -313,7 +334,11 @@ func (s *S3) Move(ctx context.Context, from, to Path) error {
 	if err := s.verifyTree(ctx, dstPrefix, want); err != nil {
 		return err
 	}
-	return s.deleteKeys(ctx, srcKeys)
+	if err := s.deleteKeys(ctx, srcKeys); err != nil {
+		return err
+	}
+	s.metaRelocate(ctx, from, to)
+	return nil
 }
 
 // Remove implements [FS]. A directory must be empty apart from its marker.
@@ -337,7 +362,12 @@ func (s *S3) Remove(ctx context.Context, p Path) error {
 			Bucket: aws.String(s.bucket),
 			Key:    aws.String(s.key(p)),
 		})
-		return mapS3Err(err)
+		if err := mapS3Err(err); err != nil {
+			return err
+		}
+		s.metaForget(ctx, p)
+		s.metaInvalidateDir(ctx, p.Parent())
+		return nil
 	}
 
 	objects, err := s.listAllObjects(ctx, s.dirPrefix(p))
@@ -349,7 +379,12 @@ func (s *S3) Remove(ctx context.Context, p Path) error {
 			return ErrNotEmpty
 		}
 	}
-	return s.deleteKeys(ctx, []string{s.dirPrefix(p)})
+	if err := s.deleteKeys(ctx, []string{s.dirPrefix(p)}); err != nil {
+		return err
+	}
+	s.metaForget(ctx, p)
+	s.metaInvalidateDir(ctx, p.Parent())
+	return nil
 }
 
 // RemoveAll implements [FS]. It is idempotent, like os.RemoveAll.
@@ -377,5 +412,10 @@ func (s *S3) RemoveAll(ctx context.Context, p Path) error {
 			keys = append(keys, obj.key)
 		}
 	}
-	return s.deleteKeys(ctx, keys)
+	if err := s.deleteKeys(ctx, keys); err != nil {
+		return err
+	}
+	s.metaForget(ctx, p)
+	s.metaInvalidateDir(ctx, p.Parent())
+	return nil
 }

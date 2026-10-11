@@ -51,6 +51,16 @@ type Checksum struct {
 	ComputedAt int64
 }
 
+type FileCache struct {
+	Path     string
+	Parent   string
+	Name     string
+	Size     int64
+	ModTime  int64
+	IsDir    int64
+	CachedAt int64
+}
+
 type FileIndex struct {
 	Path string
 	Name string
@@ -96,6 +106,11 @@ type Job struct {
 	BytesDone  int64
 	BytesTotal int64
 	Paused     int64
+}
+
+type MetaSync struct {
+	Path     string
+	SyncedAt int64
 }
 
 type RecoveryCode struct {

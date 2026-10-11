@@ -257,6 +257,49 @@ func TestS3PartSizeAndPresignTTL(t *testing.T) {
 	}
 }
 
+func TestS3MetaTTL(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv(EnvStorageBackend, BackendS3)
+	t.Setenv(EnvS3Bucket, "files")
+	t.Setenv(EnvS3Region, "us-west-004")
+
+	// Unset means the compiled default: listings answer from the cache
+	// for a minute before one re-list revalidates them.
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.S3.MetaTTL != DefaultS3MetaTTL {
+		t.Errorf("MetaTTL = %v, want default %v", cfg.S3.MetaTTL, DefaultS3MetaTTL)
+	}
+
+	// Zero disables expiry; the app's own mutations still invalidate.
+	t.Setenv(EnvS3MetaTTL, "0")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load with 0: %v", err)
+	}
+	if cfg.S3.MetaTTL != 0 {
+		t.Errorf("MetaTTL = %v, want 0", cfg.S3.MetaTTL)
+	}
+
+	t.Setenv(EnvS3MetaTTL, "30s")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load with 30s: %v", err)
+	}
+	if cfg.S3.MetaTTL != 30*time.Second {
+		t.Errorf("MetaTTL = %v, want 30s", cfg.S3.MetaTTL)
+	}
+
+	for _, raw := range []string{"-1m", "eternity"} {
+		t.Setenv(EnvS3MetaTTL, raw)
+		if _, err := Load(); err == nil || !strings.Contains(err.Error(), EnvS3MetaTTL) {
+			t.Errorf("Load with %s=%q = %v, want an %s error", EnvS3MetaTTL, raw, err, EnvS3MetaTTL)
+		}
+	}
+}
+
 func TestS3PublicEndpoint(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv(EnvStorageBackend, BackendS3)

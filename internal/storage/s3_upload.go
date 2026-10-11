@@ -178,6 +178,11 @@ func (s *S3) CompleteUpload(ctx context.Context, h UploadHandle, to Path) error 
 		if out == nil {
 			return fmt.Errorf("storage: s3 upload: empty object is gone: %w", ErrNotExist)
 		}
+		s.metaStore(ctx, to, MetaEntry{
+			Size:    aws.ToInt64(out.ContentLength),
+			ModTime: timeOrZero(out.LastModified),
+		})
+		s.metaInvalidateDir(ctx, to.Parent())
 		return nil
 	}
 
@@ -209,7 +214,16 @@ func (s *S3) CompleteUpload(ctx context.Context, h UploadHandle, to Path) error 
 			Parts: completed,
 		},
 	})
-	return mapS3Err(err)
+	if err := mapS3Err(err); err != nil {
+		return err
+	}
+	var size int64
+	for _, p := range parts {
+		size += aws.ToInt64(p.Size)
+	}
+	s.metaStore(ctx, to, MetaEntry{Size: size, ModTime: time.Now()})
+	s.metaInvalidateDir(ctx, to.Parent())
+	return nil
 }
 
 // AbortUpload implements [DirectStager]. It is idempotent. For an empty

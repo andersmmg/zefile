@@ -71,6 +71,8 @@ func (s *S3) Trash(ctx context.Context, p Path) (TrashID, error) {
 		if err := s.deleteKeys(ctx, keys); err != nil {
 			return "", err
 		}
+		s.metaForget(ctx, p)
+		s.metaInvalidateDir(ctx, p.Parent())
 		return id, nil
 	}
 
@@ -81,7 +83,12 @@ func (s *S3) Trash(ctx context.Context, p Path) (TrashID, error) {
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(s.key(p)),
 	})
-	return id, mapS3Err(err)
+	if err := mapS3Err(err); err != nil {
+		return "", err
+	}
+	s.metaForget(ctx, p)
+	s.metaInvalidateDir(ctx, p.Parent())
+	return id, nil
 }
 
 // Restore implements [Trasher]. Same contract as Local.
@@ -122,6 +129,10 @@ func (s *S3) Restore(ctx context.Context, id TrashID, to Path) error {
 		if err := s.deleteKeys(ctx, keys); err != nil {
 			return err
 		}
+		// The restored content is new to the tree: drop any stale row
+		// at the destination and let the next read repopulate it.
+		s.metaForget(ctx, to)
+		s.metaInvalidateDir(ctx, to.Parent())
 		return nil
 	}
 
@@ -131,7 +142,12 @@ func (s *S3) Restore(ctx context.Context, id TrashID, to Path) error {
 			return err
 		}
 	}
-	return s.deleteKeys(ctx, keys)
+	if err := s.deleteKeys(ctx, keys); err != nil {
+		return err
+	}
+	s.metaForget(ctx, to)
+	s.metaInvalidateDir(ctx, to.Parent())
+	return nil
 }
 
 // PurgeTrash implements [Trasher]. It is idempotent.
