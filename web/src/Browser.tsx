@@ -55,6 +55,7 @@ import {
 import { runPool, uploadFile, type UploadProgress } from './upload'
 import { categoryLabel, entryKind, formatRelativeTime, isImage, isMembersTop, isVideo } from '@/lib/files'
 import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
+import { INTERACTIVE_SELECTOR, useBoxSelect, type BoxRect } from '@/lib/box-select'
 import { Thumbnail } from '@/components/thumbnail'
 import { PreviewOverlay } from '@/components/preview-overlay'
 import { Button } from '@/components/ui/button'
@@ -195,6 +196,8 @@ type EntryActions = {
   remove: (entry: Entry) => void
   contextTarget: (entry: Entry) => void
   isSelected: (entry: Entry) => boolean
+  selectBox: (paths: string[]) => void
+  selectedPaths: () => string[]
   isShared: (entry: Entry) => boolean
   canPaste: boolean
   // Permissions in the current folder, applied to its entries so the menus offer
@@ -316,6 +319,11 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const clearSelection = useCallback(() => {
     setSelection(new Set())
     setAnchor(null)
+  }, [])
+
+  const selectBox = useCallback((paths: string[]) => {
+    setSelection(new Set(paths))
+    setAnchor(paths.length > 0 ? paths[paths.length - 1]! : null)
   }, [])
 
   // load fetches a folder's listing. A silent load refreshes the entries in
@@ -803,6 +811,8 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       if (!selection.has(entry.path)) selectEntry(entry, 'replace')
     },
     isSelected: (entry) => selection.has(entry.path),
+    selectBox,
+    selectedPaths: () => [...selection],
     isShared: (entry) => sharedPaths.has(entry.path),
     canPaste: clipboard !== null && path !== '/members',
     perms,
@@ -1559,8 +1569,17 @@ function intentOf(e: MouseEvent): ClickIntent {
  */
 function clearUnlessEntry(e: MouseEvent, onClearSelection: () => void) {
   const el = e.target instanceof Element ? e.target : null
-  if (el?.closest('[data-entry-path], button, a, input, textarea, select')) return
+  if (el?.closest(INTERACTIVE_SELECTOR)) return
   onClearSelection()
+}
+
+function BoxOverlay({ rect }: { rect: BoxRect }) {
+  return (
+    <div
+      className="pointer-events-none fixed z-20 border border-primary bg-primary/15 rounded-lg"
+      style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
+    />
+  )
 }
 
 /**
@@ -1929,6 +1948,7 @@ function locationLabel(path: string): string {
 
 function ListView({ rows, sort, onSort, actions, onClearSelection, showLocation }: ListProps) {
   const viewport = useRef<HTMLDivElement>(null)
+  const box = useBoxSelect({ snapshot: actions.selectedPaths, apply: actions.selectBox })
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -1945,7 +1965,8 @@ function ListView({ rows, sort, onSort, actions, onClearSelection, showLocation 
     <div
       ref={viewport}
       className="h-full overflow-auto"
-      onClick={(e) => clearUnlessEntry(e, onClearSelection)}
+      onMouseDown={box.onMouseDown}
+      onClick={(e) => box.click(() => clearUnlessEntry(e, onClearSelection))}
     >
       <div className={`${listGrid} sticky top-0 z-10 border-b bg-background px-4 py-2 text-xs font-medium text-muted-foreground`}>
         <span />
@@ -1977,6 +1998,7 @@ function ListView({ rows, sort, onSort, actions, onClearSelection, showLocation 
           )
         })}
       </div>
+      {box.rect && <BoxOverlay rect={box.rect} />}
     </div>
   )
 }
@@ -2120,10 +2142,12 @@ function GridView({
   size: GridSize
   showLocation: boolean
 }) {
+  const box = useBoxSelect({ snapshot: actions.selectedPaths, apply: actions.selectBox })
   return (
     <div
       className="h-full overflow-auto p-4"
-      onClick={(e) => clearUnlessEntry(e, onClearSelection)}
+      onMouseDown={box.onMouseDown}
+      onClick={(e) => box.click(() => clearUnlessEntry(e, onClearSelection))}
     >
       {groups.map((g) => (
         <section key={g.key} className="mb-4">
@@ -2143,6 +2167,7 @@ function GridView({
           </div>
         </section>
       ))}
+      {box.rect && <BoxOverlay rect={box.rect} />}
     </div>
   )
 }
