@@ -59,6 +59,16 @@ bare byte count or a `KiB`/`MiB`/`GiB` suffix.
 will fetch. Thumbnails themselves are small JPEGs kept under a reserved
 prefix in the same storage; larger files keep their icon. Same size format.
 
+### `ZEFILE_QUOTA_BYTES`
+
+*Optional, default `0` (unlimited).* Caps the bytes of live files the instance
+will hold: uploads that would push usage past it are refused with a “storage
+quota exceeded” error, checked when the upload starts and again when it
+publishes. Per-account limits are set by an admin under **Members** (zero
+means unlimited) and are enforced the same way. Usage counts live files only —
+trash and generated thumbnails don’t count — and the sidebar shows each
+account its own usage against its own limit. Same size format.
+
 ::: tip Retention
 How long the audit log and the trash are kept is **not** an environment setting —
 it is configured at runtime under **Settings → Retention** (admin). See the

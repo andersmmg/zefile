@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -16,9 +17,6 @@ type invitationResponse struct {
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
 
-	// Token is the invite secret, returned only when the invitation is created.
-	// The interface builds the shareable link from it and its own origin; the
-	// server stores only its hash and can never show it again.
 	Token string `json:"token,omitempty"`
 }
 
@@ -35,8 +33,6 @@ type createInvitationRequest struct {
 	Email string `json:"email"`
 }
 
-// handleInvitationCreate mints an invite link. Admin only: inviting is how the
-// set of accounts grows, which is an administrative act.
 func (s *Server) handleInvitationCreate(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.requireAdmin(w, r)
 	if !ok {
@@ -63,7 +59,6 @@ type invitationListResponse struct {
 	Invitations []invitationResponse `json:"invitations"`
 }
 
-// handleInvitationList returns the open invitations. Admin only.
 func (s *Server) handleInvitationList(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return
@@ -81,7 +76,6 @@ func (s *Server) handleInvitationList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, invitationListResponse{Invitations: out})
 }
 
-// handleInvitationRevoke cancels an unused invitation. Admin only.
 func (s *Server) handleInvitationRevoke(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return
@@ -105,15 +99,10 @@ type invitationCheckResponse struct {
 	Email string `json:"email,omitempty"`
 }
 
-// handleInvitationCheck reports whether an invite token is still usable, so the
-// public accept page can show a dead-link message instead of a form. It is
-// unauthenticated by necessity: the invitee has no account yet.
 func (s *Server) handleInvitationCheck(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	inv, err := s.auth.CheckInvitation(r.Context(), token)
 	if err != nil {
-		// A bad token is not an error to the caller — the page simply learns the
-		// invite is not valid.
 		writeJSON(w, r, http.StatusOK, invitationCheckResponse{Valid: false})
 		return
 	}
@@ -126,8 +115,6 @@ type acceptInvitationRequest struct {
 	Password string `json:"password"`
 }
 
-// handleInvitationAccept consumes an invite and signs the new account in, the
-// same shape as completing first-run setup.
 func (s *Server) handleInvitationAccept(w http.ResponseWriter, r *http.Request) {
 	var body acceptInvitationRequest
 	if !decodeJSON(w, r, &body) {
@@ -146,6 +133,10 @@ func (s *Server) handleInvitationAccept(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if err := s.ensureHome(r.Context(), user); err != nil {
+		slog.ErrorContext(r.Context(), "provision home directory", "user", user.Username, "error", err)
+	}
+
 	http.SetCookie(w, auth.SessionCookie(token, session.ExpiresAt, s.secureCookies))
 	s.auditAs(r, user.ID, audit.ActionUserJoined, user.Username, nil)
 
@@ -158,8 +149,6 @@ func (s *Server) handleInvitationAccept(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// requireAdmin resolves the caller and refuses a non-administrator. It answers
-// the response itself on failure and reports whether the handler may continue.
 func (s *Server) requireAdmin(w http.ResponseWriter, r *http.Request) (caller, bool) {
 	c, ok := callerFrom(r.Context())
 	if !ok {

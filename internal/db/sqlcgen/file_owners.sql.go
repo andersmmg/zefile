@@ -68,6 +68,35 @@ func (q *Queries) GetFileOwnersForPaths(ctx context.Context, paths []string) ([]
 	return items, nil
 }
 
+const listFileOwners = `-- name: ListFileOwners :many
+SELECT path, owner_id, created_at FROM file_owners
+`
+
+// The whole ownership map, so usage can be attributed in one pass over a
+// single tree walk rather than one query per file.
+func (q *Queries) ListFileOwners(ctx context.Context) ([]FileOwner, error) {
+	rows, err := q.db.QueryContext(ctx, listFileOwners)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FileOwner{}
+	for rows.Next() {
+		var i FileOwner
+		if err := rows.Scan(&i.Path, &i.OwnerID, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const moveFileOwner = `-- name: MoveFileOwner :exec
 UPDATE file_owners
 SET path = ?1 || substr(path, length(?2) + 1)

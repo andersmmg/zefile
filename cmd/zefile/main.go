@@ -29,6 +29,7 @@ import (
 	"github.com/krishna2206/zefile/internal/fetch"
 	"github.com/krishna2206/zefile/internal/geoip"
 	"github.com/krishna2206/zefile/internal/job"
+	"github.com/krishna2206/zefile/internal/quota"
 	"github.com/krishna2206/zefile/internal/settings"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
@@ -206,10 +207,13 @@ func run() error {
 	}
 	warnAboutSingleOrigin(cfg)
 
+	quotas := quota.New(fs, cfg.QuotaBytes, engine, authService)
+
 	var uploadOpts []upload.Option
 	if d, ok := fs.(storage.DirectStager); ok {
 		uploadOpts = append(uploadOpts, upload.WithDirect(d, cfg.S3.PartSize))
 	}
+	uploadOpts = append(uploadOpts, upload.WithQuotaCheck(quotas.CheckCreate))
 	uploads := upload.New(database, asUploadStore(fs), uploadOpts...)
 	trashService := trash.New(database, storage.AsTrasher(fs))
 	auditLog := audit.New(database)
@@ -276,6 +280,7 @@ func run() error {
 		PreviewMaxBytes: cfg.PreviewMaxBytes,
 		ObjectStorage:   cfg.Backend == config.BackendS3,
 		Thumbs:          thumbs,
+		Quota:           quotas,
 	}).Handler()
 
 	contentHandler := content.New(content.Options{

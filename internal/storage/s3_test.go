@@ -809,3 +809,68 @@ func (g denyGuard) Permitted(_ context.Context, _ Op, paths []Path) ([]bool, err
 	}
 	return verdicts, nil
 }
+
+func TestS3ProbePathSingleCall(t *testing.T) {
+	stub := newStubS3()
+	stub.put("docs/report.pdf", 42)
+	stub.put("pics/", 0)
+	stub.put("pics/a.jpg", 7)
+	stub.pageSize = 1 // every probe must conclude from one key if it can
+	s := newTestS3(t, stub, nil)
+	ctx := context.Background()
+
+	info, err := s.Stat(ctx, MustParsePath("/docs/report.pdf"))
+	if err != nil || info.IsDir || info.Size != 42 {
+		t.Errorf("Stat(file) = %+v, %v; want a 42-byte file", info, err)
+	}
+	info, err = s.Stat(ctx, MustParsePath("/pics"))
+	if err != nil || !info.IsDir {
+		t.Errorf("Stat(dir with marker) = %+v, %v; want a dir", info, err)
+	}
+	info, err = s.Stat(ctx, MustParsePath("/docs"))
+	if err != nil || !info.IsDir {
+		t.Errorf("Stat(dir without marker) = %+v, %v; want a dir", info, err)
+	}
+	if _, err := s.Stat(ctx, MustParsePath("/nope")); !errors.Is(err, ErrNotExist) {
+		t.Errorf("Stat(missing) = %v, want ErrNotExist", err)
+	}
+	if _, err := s.Stat(ctx, MustParsePath("/docs2")); !errors.Is(err, ErrNotExist) {
+		t.Errorf("Stat(sibling prefix) = %v, want ErrNotExist", err)
+	}
+}
+
+func TestS3CopyTreeParallel(t *testing.T) {
+	stub := newStubS3()
+	const n = 25
+	for i := 0; i < n; i++ {
+		stub.put(fmt.Sprintf("src/f%02d.bin", i), int64(i+1))
+	}
+	s := newTestS3(t, stub, nil)
+	ctx := context.Background()
+
+	var mu sync.Mutex
+	var last int64 = -1
+	var calls int64
+	if err := s.CopyTree(ctx, MustParsePath("/src"), MustParsePath("/dst"), func(done, total int64) {
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		if done < last {
+			t.Errorf("progress went backwards: %d after %d", done, last)
+		}
+		last = done
+		if total != int64(n*(n+1)/2) {
+			t.Errorf("progress total = %d, want %d", total, n*(n+1)/2)
+		}
+	}); err != nil {
+		t.Fatalf("CopyTree: %v", err)
+	}
+	if calls == 0 {
+		t.Error("no progress reported")
+	}
+	for i := 0; i < n; i++ {
+		if !stub.has(fmt.Sprintf("dst/f%02d.bin", i)) {
+			t.Errorf("dst/f%02d.bin missing after parallel copy", i)
+		}
+	}
+}

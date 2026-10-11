@@ -11,6 +11,7 @@ import (
 	"github.com/krishna2206/zefile/internal/content"
 	"github.com/krishna2206/zefile/internal/geoip"
 	"github.com/krishna2206/zefile/internal/job"
+	"github.com/krishna2206/zefile/internal/quota"
 	"github.com/krishna2206/zefile/internal/settings"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
@@ -44,6 +45,7 @@ type Server struct {
 	previewMaxBytes int64
 	objectStorage   bool
 	thumbs          *thumb.Service
+	quota           *quota.Service
 }
 
 // Options configures a [Server].
@@ -86,6 +88,8 @@ type Options struct {
 	// Thumbs serves pre-generated thumbnails, growing them in the
 	// background. Nil keeps the on-the-fly behaviour.
 	Thumbs *thumb.Service
+
+	Quota *quota.Service
 }
 
 // defaultPreviewMaxBytes applies when PreviewMaxBytes is unset. It
@@ -119,6 +123,7 @@ func New(opts Options) *Server {
 		previewMaxBytes: previewMaxBytes,
 		objectStorage:   opts.ObjectStorage,
 		thumbs:          opts.Thumbs,
+		quota:           opts.Quota,
 	}
 }
 
@@ -202,6 +207,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/settings/retention", s.handleGetRetention)
 	authed.HandleFunc("PUT /api/v1/settings/retention", s.handleSetRetention)
 
+	authed.HandleFunc("GET /api/v1/shared-with-me", s.handleSharedWithMe)
 	authed.HandleFunc("GET /api/v1/users", s.handleListUsers)
 	authed.HandleFunc("PATCH /api/v1/users/{id}", s.handleUpdateUser)
 	authed.HandleFunc("DELETE /api/v1/users/{id}", s.handleDeleteUser)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -619,6 +620,68 @@ func (e *Engine) ClearOwner(ctx context.Context, p storage.Path) error {
 		return fmt.Errorf("acl: clear owner: %w", err)
 	}
 	return nil
+}
+
+// Owners returns the ownership map by path.
+func (e *Engine) Owners(ctx context.Context) (map[string]int64, error) {
+	rows, err := e.reads.ListFileOwners(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acl: list owners: %w", err)
+	}
+	out := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		out[row.Path] = row.OwnerID
+	}
+	return out, nil
+}
+
+// SharedPaths lists paths a non-admin can read.
+func (e *Engine) SharedPaths(ctx context.Context) ([]string, error) {
+	subject, ok := FromContext(ctx)
+	if !ok || subject.IsAdmin {
+		return nil, nil
+	}
+	rules, err := e.loadRules(ctx, subject)
+	if err != nil {
+		return nil, err
+	}
+	owners, err := e.reads.ListFileOwners(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acl: list owners: %w", err)
+	}
+	mine := map[string]bool{}
+	for _, row := range owners {
+		if row.OwnerID == subject.UserID {
+			mine[row.Path] = true
+		}
+	}
+
+	seen := map[string]bool{}
+	var out []string
+	consider := func(path string) {
+		if seen[path] {
+			return
+		}
+		seen[path] = true
+		p, err := storage.ParsePath(path)
+		if err != nil {
+			return
+		}
+		if resolve(rules, p, mine[path]).Has(PermRead) {
+			out = append(out, path)
+		}
+	}
+	for _, r := range rules {
+		if r.deny || !r.perms.Has(PermRead) || r.path == "/" {
+			continue
+		}
+		consider(r.path)
+	}
+	for path := range mine {
+		consider(path)
+	}
+	sort.Strings(out)
+	return out, nil
 }
 
 // OwnerOf returns who uploaded a path, and whether anyone did. Files placed by

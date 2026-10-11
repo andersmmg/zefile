@@ -98,6 +98,9 @@ type Querier interface {
 	// was since deleted, which the entry still records by id and ip.
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
 	ListExpiredUploads(ctx context.Context, expiresAt int64) ([]Upload, error)
+	// The whole ownership map, so usage can be attributed in one pass over a
+	// single tree walk rather than one query per file.
+	ListFileOwners(ctx context.Context) ([]FileOwner, error)
 	ListGroupMemberIDs(ctx context.Context, groupID int64) ([]int64, error)
 	// Groups with how many members each holds, for the management screen.
 	ListGroups(ctx context.Context) ([]ListGroupsRow, error)
@@ -153,6 +156,8 @@ type Querier interface {
 	SetTOTPSecret(ctx context.Context, arg SetTOTPSecretParams) error
 	SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error
 	SetUserDisabled(ctx context.Context, arg SetUserDisabledParams) error
+	// A per-account storage cap in bytes. Zero means unlimited.
+	SetUserQuota(ctx context.Context, arg SetUserQuotaParams) error
 	// Records use for the "last used" column. Best-effort, like session touch: a
 	// lost timestamp must never fail an otherwise-valid request.
 	TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error

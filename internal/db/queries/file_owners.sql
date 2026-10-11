@@ -19,3 +19,8 @@ WHERE path = sqlc.arg(from_path)
 
 -- name: DeleteFileOwner :exec
 DELETE FROM file_owners WHERE path = ?;
+
+-- name: ListFileOwners :many
+-- The whole ownership map, so usage can be attributed in one pass over a
+-- single tree walk rather than one query per file.
+SELECT * FROM file_owners;

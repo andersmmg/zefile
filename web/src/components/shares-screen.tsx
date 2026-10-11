@@ -3,29 +3,39 @@ import { toast } from 'sonner'
 import { CircleNotch, LockSimple } from '@phosphor-icons/react'
 
 import { Empty } from '../App'
-import { api, ApiError, type Entry, type Share } from '@/api'
+import { api, ApiError, type Entry, type Share, type User } from '@/api'
 import { entryKind, formatRelativeTime } from '@/lib/files'
 import { Button } from '@/components/ui/button'
 
-/**
- * SharesScreen lists the owner's public links and lets them be revoked. Links
- * cannot be re-copied here: the token is shown once at creation and never
- * stored, so getting a lost link back means revoking and making a new one.
- */
-export function SharesScreen() {
+/** SharesScreen lists public links or incoming shares. */
+export function SharesScreen({
+  me,
+  mode,
+  onOpen,
+}: {
+  me: User
+  mode: 'links' | 'incoming'
+  onOpen: (path: string) => void
+}) {
   const [shares, setShares] = useState<Share[]>([])
+  const [incoming, setIncoming] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      setShares((await api.listShares()).shares)
+      const [mine, theirs] = await Promise.all([
+        api.listShares(),
+        me.is_admin ? Promise.resolve({ entries: [] as Entry[] }) : api.sharedWithMe(),
+      ])
+      setShares(mine.shares)
+      setIncoming(theirs.entries)
     } catch {
-      toast.error('Could not load your shared links.')
+      toast.error('Could not load sharing.')
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [me.is_admin])
 
   useEffect(() => {
     void load()
@@ -44,7 +54,9 @@ export function SharesScreen() {
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
-        <h1 className="font-serif text-xl font-semibold tracking-tight">Shared</h1>
+        <h1 className="font-serif text-xl font-semibold tracking-tight">
+          {mode === 'incoming' ? 'Shared with me' : 'Shares'}
+        </h1>
       </header>
 
       <div className="min-h-0 flex-1 overflow-auto">
@@ -52,6 +64,16 @@ export function SharesScreen() {
           <div className="grid h-full place-items-center">
             <CircleNotch className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
           </div>
+        ) : mode === 'incoming' ? (
+          incoming.length === 0 ? (
+            <Empty title="Nothing shared with you" detail="Folders others give you access to appear here." />
+          ) : (
+            <div>
+              {incoming.map((entry) => (
+                <IncomingRow key={entry.path} entry={entry} onOpen={() => onOpen(entry.path)} />
+              ))}
+            </div>
+          )
         ) : shares.length === 0 ? (
           <Empty title="No shared links" detail="Create a public link from a file's right-click menu." />
         ) : (
@@ -63,6 +85,24 @@ export function SharesScreen() {
         )}
       </div>
     </div>
+  )
+}
+
+function IncomingRow({ entry, onOpen }: { entry: Entry; onOpen: () => void }) {
+  const { icon: Icon, color } = entryKind(entry)
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="flex h-14 w-full items-center gap-3 border-b border-border/60 px-4 text-left hover:bg-accent/40"
+    >
+      <Icon className={`size-5 shrink-0 ${color}`} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm">{entry.name}</p>
+        <p className="truncate text-xs text-muted-foreground">{entry.path}</p>
+      </div>
+    </button>
   )
 }
 

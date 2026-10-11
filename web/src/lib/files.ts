@@ -12,6 +12,7 @@ import {
   FileXls,
   FileZip,
   Folder,
+  UsersThree,
   type Icon,
 } from '@phosphor-icons/react'
 
@@ -26,6 +27,7 @@ type Kind = { icon: Icon; color: string }
 // main.tsx), so each renders two-tone from a single colour.
 const FOLDER: Kind = { icon: Folder, color: 'text-primary' }
 const GENERIC: Kind = { icon: File, color: 'text-muted-foreground' }
+const MEMBERS: Kind = { icon: UsersThree, color: 'text-primary' }
 
 const BY_EXTENSION: Record<string, Kind> = {
   // Documents
@@ -79,9 +81,17 @@ const BY_EXTENSION: Record<string, Kind> = {
   md: { icon: FileCode, color: 'text-cyan-500' },
 }
 
+/** isMembersTop reports managed members structure. */
+export function isMembersTop(path: string): boolean {
+  if (path === '/members') return true
+  const cut = path.lastIndexOf('/')
+  const parent = cut <= 0 ? '/' : path.slice(0, cut)
+  return parent === '/members'
+}
+
 /** entryKind picks the icon and colour for an entry by its extension. */
 export function entryKind(entry: Entry): Kind {
-  if (entry.is_dir) return FOLDER
+  if (entry.is_dir) return entry.path === '/members' ? MEMBERS : FOLDER
   const dot = entry.name.lastIndexOf('.')
   if (dot <= 0) return GENERIC
   const ext = entry.name.slice(dot + 1).toLowerCase()

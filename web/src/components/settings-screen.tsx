@@ -3,7 +3,7 @@ import { toast } from 'sonner'
 import { CircleNotch, DeviceMobile, Monitor } from '@phosphor-icons/react'
 import { toDataURL } from 'qrcode'
 
-import { api, ApiError, type SessionInfo, type User } from '@/api'
+import { api, ApiError, formatSize, type SessionInfo, type Space, type User } from '@/api'
 import { formatRelativeTime } from '@/lib/files'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -68,6 +68,7 @@ export function SettingsScreen({ me, onSignedOut }: { me: User; onSignedOut: () 
           <TwoFactorSection initiallyEnabled={!!me.totp_enabled} />
           <RecoveryCodesSection />
           <TokensSection />
+          {me.is_admin && <StorageSection />}
           {me.is_admin && <RetentionSection />}
           <SessionsSection onSignedOut={onSignedOut} />
         </div>
@@ -476,6 +477,47 @@ const RETENTION_OPTIONS = [
 
 const retentionSelectClass =
   'flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]'
+
+function StorageSection() {
+  const [space, setSpace] = useState<Space | null>(null)
+
+  useEffect(() => {
+    api
+      .space()
+      .then(setSpace)
+      .catch(() => toast.error('Could not load storage usage.'))
+  }, [])
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-base font-semibold text-foreground">Storage</h2>
+        <p className="text-sm text-muted-foreground">
+          Live files across all accounts. Trash and generated thumbnails don’t count.
+        </p>
+      </div>
+      {!space ? (
+        <div className="grid place-items-center py-6">
+          <CircleNotch className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
+        </div>
+      ) : (
+        <div className="flex h-14 items-center gap-3 rounded-lg border px-4">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm">
+              {formatSize(space.instance_used)}
+              {space.instance_total > 0 ? ` of ${formatSize(space.instance_total)}` : ''} used
+            </p>
+            <p className="truncate text-xs text-muted-foreground">
+              {space.instance_total > 0
+                ? 'Instance quota — uploads past it are refused.'
+                : 'No instance quota configured.'}
+            </p>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
 
 function RetentionSection() {
   const [audit, setAudit] = useState('0')

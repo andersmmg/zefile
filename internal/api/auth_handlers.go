@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -78,6 +79,10 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, r, err)
 		return
+	}
+
+	if err := s.ensureHome(r.Context(), user); err != nil {
+		slog.ErrorContext(r.Context(), "provision home directory", "user", user.Username, "error", err)
 	}
 
 	http.SetCookie(w, auth.SessionCookie(token, session.ExpiresAt, s.secureCookies))

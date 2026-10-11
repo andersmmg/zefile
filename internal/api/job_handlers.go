@@ -11,15 +11,13 @@ import (
 )
 
 type jobResponse struct {
-	ID       int64   `json:"id"`
-	Type     string  `json:"type"`
-	Status   string  `json:"status"`
-	Progress float64 `json:"progress"`
-	// BytesDone and BytesTotal let the interface show a transfer rate from the
-	// change between polls. BytesTotal is 0 when the size is unknown.
-	BytesDone  int64  `json:"bytes_done"`
-	BytesTotal int64  `json:"bytes_total"`
-	Error      string `json:"error,omitempty"`
+	ID         int64   `json:"id"`
+	Type       string  `json:"type"`
+	Status     string  `json:"status"`
+	Progress   float64 `json:"progress"`
+	BytesDone  int64   `json:"bytes_done"`
+	BytesTotal int64   `json:"bytes_total"`
+	Error      string  `json:"error,omitempty"`
 
 	CreatedAt  time.Time  `json:"created_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
@@ -47,9 +45,14 @@ type jobListResponse struct {
 	Jobs []jobResponse `json:"jobs"`
 }
 
-// handleJobList returns the most recent background jobs, newest first.
+// handleJobList returns the caller's recent background jobs.
 func (s *Server) handleJobList(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.jobs.List(r.Context(), 50)
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
+	jobs, err := s.jobs.ListFor(r.Context(), c.user.ID, c.user.IsAdmin, 50)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -61,15 +64,18 @@ func (s *Server) handleJobList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, jobListResponse{Jobs: out})
 }
 
-// handleJobGet returns one job, the endpoint the interface polls to follow a
-// copy's progress.
 func (s *Server) handleJobGet(w http.ResponseWriter, r *http.Request) {
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, CodeBadRequest, "Bad id", "The job id must be a number.")
 		return
 	}
-	j, err := s.jobs.Get(r.Context(), id)
+	j, err := s.jobs.GetFor(r.Context(), id, c.user.ID, c.user.IsAdmin)
 	if err != nil {
 		if errors.Is(err, job.ErrNotFound) {
 			writeProblem(w, r, http.StatusNotFound, CodeNotFound, "No such job", "This job is unknown.")
@@ -81,15 +87,22 @@ func (s *Server) handleJobGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, toJobResponse(j))
 }
 
-// jobAction runs one of cancel/pause/resume on a job and returns its fresh
-// state. The three share everything but the verb.
 func (s *Server) jobAction(w http.ResponseWriter, r *http.Request, act func(context.Context, int64) error) {
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
 	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil {
 		writeProblem(w, r, http.StatusBadRequest, CodeBadRequest, "Bad id", "The job id must be a number.")
 		return
 	}
 	if err := act(r.Context(), id); err != nil {
+		if errors.Is(err, job.ErrNotFound) {
+			writeProblem(w, r, http.StatusNotFound, CodeNotFound, "No such job", "This job is unknown.")
+			return
+		}
 		if errors.Is(err, job.ErrNotRunning) {
 			writeProblem(w, r, http.StatusConflict, CodeConflict, "Not running", "Only a running job can be paused.")
 			return
@@ -97,7 +110,7 @@ func (s *Server) jobAction(w http.ResponseWriter, r *http.Request, act func(cont
 		writeError(w, r, err)
 		return
 	}
-	j, err := s.jobs.Get(r.Context(), id)
+	j, err := s.jobs.GetFor(r.Context(), id, c.user.ID, c.user.IsAdmin)
 	if err != nil {
 		if errors.Is(err, job.ErrNotFound) {
 			writeProblem(w, r, http.StatusNotFound, CodeNotFound, "No such job", "This job is unknown.")
@@ -110,13 +123,31 @@ func (s *Server) jobAction(w http.ResponseWriter, r *http.Request, act func(cont
 }
 
 func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
-	s.jobAction(w, r, s.jobs.Cancel)
+	s.jobAction(w, r, func(ctx context.Context, id int64) error {
+		c, ok := callerFrom(ctx)
+		if !ok {
+			return job.ErrNotFound
+		}
+		return s.jobs.CancelFor(ctx, id, c.user.ID, c.user.IsAdmin)
+	})
 }
 
 func (s *Server) handleJobPause(w http.ResponseWriter, r *http.Request) {
-	s.jobAction(w, r, s.jobs.Pause)
+	s.jobAction(w, r, func(ctx context.Context, id int64) error {
+		c, ok := callerFrom(ctx)
+		if !ok {
+			return job.ErrNotFound
+		}
+		return s.jobs.PauseFor(ctx, id, c.user.ID, c.user.IsAdmin)
+	})
 }
 
 func (s *Server) handleJobResume(w http.ResponseWriter, r *http.Request) {
-	s.jobAction(w, r, s.jobs.Resume)
+	s.jobAction(w, r, func(ctx context.Context, id int64) error {
+		c, ok := callerFrom(ctx)
+		if !ok {
+			return job.ErrNotFound
+		}
+		return s.jobs.ResumeFor(ctx, id, c.user.ID, c.user.IsAdmin)
+	})
 }

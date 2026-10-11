@@ -30,8 +30,14 @@ func toTrashResponse(it trash.Item) trashItemResponse {
 	}
 }
 
+// handleTrashList returns the caller's trash.
 func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
-	items, err := s.trash.List(r.Context())
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
+	items, err := s.trash.ListFor(r.Context(), c.user.ID, c.user.IsAdmin)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -43,14 +49,31 @@ func (s *Server) handleTrashList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, map[string]any{"items": out})
 }
 
-// handleTrashRestore puts a trashed entry back and re-establishes ownership at
-// the destination for the caller who restored it.
+// handleTrashRestore puts a trashed entry back.
 func (s *Server) handleTrashRestore(w http.ResponseWriter, r *http.Request) {
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
 	id, ok := trashIDParam(w, r)
 	if !ok {
 		return
 	}
-	dest, err := s.trash.Restore(r.Context(), id)
+	dest, err := s.trash.OriginalPathFor(r.Context(), id, c.user.ID, c.user.IsAdmin)
+	if err != nil {
+		if errors.Is(err, trash.ErrNotFound) {
+			writeProblem(w, r, http.StatusNotFound, CodeNotFound,
+				"No such item", "This item is not in the trash, or was already removed.")
+			return
+		}
+		writeError(w, r, err)
+		return
+	}
+	if !guardMembersTop(w, r, dest) {
+		return
+	}
+	dest, err = s.trash.RestoreFor(r.Context(), id, c.user.ID, c.user.IsAdmin)
 	if err != nil {
 		writeTrashError(w, r, err)
 		return
@@ -66,11 +89,16 @@ func (s *Server) handleTrashRestore(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTrashPurge(w http.ResponseWriter, r *http.Request) {
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
 	id, ok := trashIDParam(w, r)
 	if !ok {
 		return
 	}
-	if err := s.trash.Purge(r.Context(), id); err != nil {
+	if err := s.trash.PurgeFor(r.Context(), id, c.user.ID, c.user.IsAdmin); err != nil {
 		writeTrashError(w, r, err)
 		return
 	}
@@ -78,8 +106,14 @@ func (s *Server) handleTrashPurge(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusNoContent, nil)
 }
 
+// handleTrashEmpty empties the caller's trash.
 func (s *Server) handleTrashEmpty(w http.ResponseWriter, r *http.Request) {
-	if err := s.trash.Empty(r.Context()); err != nil {
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
+	if err := s.trash.EmptyFor(r.Context(), c.user.ID, c.user.IsAdmin); err != nil {
 		writeError(w, r, err)
 		return
 	}

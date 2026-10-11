@@ -11,15 +11,12 @@ import (
 )
 
 type updateUserRequest struct {
-	// Pointers so "not mentioned" is distinct from "set to false": a request may
-	// change the admin flag, the disabled flag, either, or neither.
-	IsAdmin  *bool `json:"is_admin"`
-	Disabled *bool `json:"disabled"`
+	IsAdmin    *bool  `json:"is_admin"`
+	Disabled   *bool  `json:"disabled"`
+	QuotaBytes *int64 `json:"quota_bytes"`
 }
 
-// handleUpdateUser promotes/demotes or disables/enables an account. Admin only,
-// and never your own account: the rule that you cannot touch yourself here is
-// also what guarantees the last administrator can never lock themselves out.
+// handleUpdateUser updates an account other than the caller's.
 func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.requireAdmin(w, r)
 	if !ok {
@@ -57,6 +54,17 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.QuotaBytes != nil {
+		if *body.QuotaBytes < 0 {
+			writeProblem(w, r, http.StatusBadRequest, CodeBadRequest,
+				"Bad quota", "The storage quota must be zero (unlimited) or a positive byte count.")
+			return
+		}
+		if err := s.auth.SetUserQuota(r.Context(), id, *body.QuotaBytes); err != nil {
+			writeError(w, r, err)
+			return
+		}
+	}
 
 	updated, err := s.auth.GetUser(r.Context(), id)
 	if err != nil {
@@ -64,15 +72,15 @@ func (s *Server) handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, audit.ActionUserUpdated, updated.Username, map[string]any{
-		"is_admin": updated.IsAdmin, "disabled": updated.Disabled,
+		"is_admin": updated.IsAdmin, "disabled": updated.Disabled, "quota_bytes": updated.QuotaBytes,
 	})
 	writeJSON(w, r, http.StatusOK, userSummary{
 		ID: updated.ID, Username: updated.Username, IsAdmin: updated.IsAdmin, Disabled: updated.Disabled,
+		QuotaBytes: updated.QuotaBytes,
 	})
 }
 
-// handleDeleteUser removes an account and everything that hangs off it. Admin
-// only, and never your own account.
+// handleDeleteUser removes an account other than the caller's.
 func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	c, ok := s.requireAdmin(w, r)
 	if !ok {
@@ -94,8 +102,6 @@ func (s *Server) handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The row goes first — sessions and file ownership cascade with it — then the
-	// ACL rules it held, which have no foreign key to cascade through.
 	if err := s.auth.DeleteUser(r.Context(), id); err != nil {
 		writeError(w, r, err)
 		return

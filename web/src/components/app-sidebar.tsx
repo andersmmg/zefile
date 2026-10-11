@@ -7,6 +7,7 @@ import {
   ShareNetwork,
   SignOut,
   Trash,
+  TrayArrowDown,
   UsersThree,
 } from '@phosphor-icons/react'
 
@@ -24,7 +25,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-type Section = 'files' | 'trash' | 'shared' | 'members' | 'settings' | 'activity'
+type Section = 'files' | 'trash' | 'shared' | 'shared-with-me' | 'members' | 'settings' | 'activity'
 
 type Props = {
   user: User
@@ -36,6 +37,7 @@ type Props = {
   onHome: () => void
   onTrash: () => void
   onShared: () => void
+  onSharedWithMe: () => void
   onMembers: () => void
   onActivity: () => void
   onSettings: () => void
@@ -46,10 +48,12 @@ type Props = {
  * Sidebar is the app's fixed left column: identity, the "New" action,
  * navigation, and the storage gauge that tells you when to stop uploading.
  */
-export function Sidebar({ user, space, section, create, canCreate, version, onHome, onTrash, onShared, onMembers, onActivity, onSettings, onSignOut }: Props) {
+export function Sidebar({ user, space, section, create, canCreate, version, onHome, onTrash, onShared, onSharedWithMe, onMembers, onActivity, onSettings, onSignOut }: Props) {
   const inFiles = section === 'files'
-  const used = space ? Math.max(0, space.total - space.available) : 0
-  const percent = space && space.total > 0 ? (used / space.total) * 100 : 0
+  const used = space ? Math.max(0, space.used) : 0
+  const quota = space ? Math.max(0, space.quota) : 0
+  const percent = space && quota > 0 ? Math.min(100, (used / quota) * 100) : 0
+  const overQuota = quota > 0 && used > quota
 
   return (
     // Duotone icons live only here, in the sidebar; the rest of the app uses
@@ -76,13 +80,23 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
           <House />
           My files
         </Button>
+        {!user.is_admin && (
+          <Button
+            variant={section === 'shared-with-me' ? 'secondary' : 'ghost'}
+            className="justify-start gap-2"
+            onClick={onSharedWithMe}
+          >
+            <TrayArrowDown />
+            Shared with me
+          </Button>
+        )}
         <Button
           variant={section === 'shared' ? 'secondary' : 'ghost'}
           className="justify-start gap-2"
           onClick={onShared}
         >
           <ShareNetwork />
-          Shared
+          Shares
         </Button>
         <Button
           variant={section === 'trash' ? 'secondary' : 'ghost'}
@@ -108,8 +122,8 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
         {space && (
           <div className="space-y-2 rounded-lg border bg-background/60 p-3">
             <Progress value={percent} />
-            <p className="text-xs text-muted-foreground">
-              {formatSize(used)} of {formatSize(space.total)} used
+            <p className={`text-xs ${overQuota ? 'font-medium text-destructive' : 'text-muted-foreground'}`}>
+              {quota > 0 ? `${formatSize(used)} of ${formatSize(quota)} used` : `${formatSize(used)} used`}
             </p>
             {space.read_only && (
               <p className="text-xs font-medium text-destructive">Read-only</p>

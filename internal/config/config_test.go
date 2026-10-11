@@ -167,6 +167,33 @@ func TestThumbMaxBytes(t *testing.T) {
 	}
 }
 
+func TestQuotaBytes(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv(EnvDataDir, t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.QuotaBytes != 0 {
+		t.Errorf("QuotaBytes = %d, want default 0 (unlimited)", cfg.QuotaBytes)
+	}
+
+	t.Setenv(EnvQuotaBytes, "10GiB")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.QuotaBytes != 10<<30 {
+		t.Errorf("QuotaBytes = %d, want %d", cfg.QuotaBytes, 10<<30)
+	}
+
+	t.Setenv(EnvQuotaBytes, "-5")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), EnvQuotaBytes) {
+		t.Fatalf("Load with a negative quota = %v, want an %s error", err, EnvQuotaBytes)
+	}
+}
+
 func TestS3PartSizeAndPresignTTL(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv(EnvStorageBackend, BackendS3)

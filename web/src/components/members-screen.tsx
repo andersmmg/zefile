@@ -10,7 +10,7 @@ import {
 } from '@phosphor-icons/react'
 
 import { Empty } from '../App'
-import { api, ApiError, type Invitation, type User, type UserSummary } from '@/api'
+import { api, ApiError, formatSize, type Invitation, type User, type UserSummary } from '@/api'
 import { GroupsSection } from '@/components/groups-section'
 import { formatRelativeTime } from '@/lib/files'
 import { Button } from '@/components/ui/button'
@@ -35,23 +35,18 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 
-/** inviteLink builds the shareable URL from a token and this app's own origin —
- *  the server only ever hands back the token. */
 function inviteLink(token: string): string {
   return `${location.origin}/invite?token=${encodeURIComponent(token)}`
 }
 
-/**
- * MembersScreen is the administrator's view of who can use the instance: the
- * accounts that exist and the invitations still open. Accounts can be promoted,
- * disabled or removed; invitations created and revoked.
- */
+/** MembersScreen manages accounts and invitations. */
 export function MembersScreen({ me }: { me: User }) {
   const [users, setUsers] = useState<UserSummary[]>([])
   const [invitations, setInvitations] = useState<Invitation[]>([])
   const [loading, setLoading] = useState(true)
   const [inviting, setInviting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<UserSummary | null>(null)
+  const [quotaFor, setQuotaFor] = useState<UserSummary | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -70,7 +65,7 @@ export function MembersScreen({ me }: { me: User }) {
     void load()
   }, [load])
 
-  async function update(user: UserSummary, patch: { is_admin?: boolean; disabled?: boolean }) {
+  async function update(user: UserSummary, patch: { is_admin?: boolean; disabled?: boolean; quota_bytes?: number }) {
     try {
       await api.updateUser(user.id, patch)
       await load()
@@ -130,6 +125,7 @@ export function MembersScreen({ me }: { me: User }) {
                     isSelf={user.id === me.id}
                     onUpdate={(patch) => update(user, patch)}
                     onDelete={() => setConfirmDelete(user)}
+                    onQuota={() => setQuotaFor(user)}
                   />
                 ))}
               </div>
@@ -173,6 +169,17 @@ export function MembersScreen({ me }: { me: User }) {
         />
       )}
 
+      {quotaFor && (
+        <QuotaDialog
+          user={quotaFor}
+          onClose={() => setQuotaFor(null)}
+          onSave={(quotaBytes) => {
+            setQuotaFor(null)
+            void update(quotaFor, { quota_bytes: quotaBytes })
+          }}
+        />
+      )}
+
       {confirmDelete && (
         <AlertDialog open onOpenChange={(open) => !open && setConfirmDelete(null)}>
           <AlertDialogContent>
@@ -199,11 +206,13 @@ function UserRow({
   isSelf,
   onUpdate,
   onDelete,
+  onQuota,
 }: {
   user: UserSummary
   isSelf: boolean
-  onUpdate: (patch: { is_admin?: boolean; disabled?: boolean }) => void
+  onUpdate: (patch: { is_admin?: boolean; disabled?: boolean; quota_bytes?: number }) => void
   onDelete: () => void
+  onQuota: () => void
 }) {
   return (
     <div className="flex h-14 items-center gap-3 border-b border-border/60 px-4 last:border-b-0 hover:bg-accent/40">
@@ -217,11 +226,11 @@ function UserRow({
         </p>
         <p className="truncate text-xs text-muted-foreground">
           {user.is_admin ? 'Administrator' : 'Member'}
-          {user.disabled && ' · disabled'}
+          {user.disabled && ' · disabled'} · {formatSize(user.used_bytes)} used
+          {user.quota_bytes > 0 ? ` · limit ${formatSize(user.quota_bytes)}` : ' · no limit'}
         </p>
       </div>
 
-      {/* You cannot act on your own account here — the server refuses it too. */}
       {!isSelf && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -236,6 +245,7 @@ function UserRow({
             <DropdownMenuItem onSelect={() => onUpdate({ disabled: !user.disabled })}>
               {user.disabled ? 'Enable' : 'Disable'}
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onQuota}>Set storage limit…</DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem variant="destructive" onSelect={onDelete}>
               Remove account
@@ -270,11 +280,87 @@ function InvitationRow({ invitation, onRevoke }: { invitation: Invitation; onRev
   )
 }
 
-/**
- * InviteDialog creates an invite link. Like a share, the link is shown once —
- * the token is stored only as a hash and cannot be recovered — so it presents
- * the form first, then the link to copy.
- */
+function parseBytesInput(raw: string): number | null {
+  const t = raw.trim().toUpperCase()
+  if (t === '' || t === '0' || t === 'UNLIMITED') return 0
+  const m = /^(\d+(?:\.\d+)?)\s*(B|KB|KIB|MB|MIB|GB|GIB)?$/.exec(t)
+  if (!m) return null
+  const mult: Record<string, number> = {
+    B: 1,
+    KB: 1 << 10,
+    KIB: 1 << 10,
+    MB: 1 << 20,
+    MIB: 1 << 20,
+    GB: 1 << 30,
+    GIB: 1 << 30,
+  }
+  const n = Math.floor(parseFloat(m[1] ?? '') * (mult[m[2] ?? 'B'] ?? 1))
+  return Number.isSafeInteger(n) && n >= 0 ? n : null
+}
+
+function QuotaDialog({
+  user,
+  onClose,
+  onSave,
+}: {
+  user: UserSummary
+  onClose: () => void
+  onSave: (quotaBytes: number) => void
+}) {
+  const [value, setValue] = useState(user.quota_bytes > 0 ? formatSize(user.quota_bytes) : '')
+  const [error, setError] = useState('')
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    const n = parseBytesInput(value)
+    if (n === null) {
+      setError('Enter a byte count like 512MiB, or leave it empty for no limit.')
+      return
+    }
+    onSave(n)
+  }
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Storage limit for “{user.username}”</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={submit} className="space-y-3">
+          <p className="text-sm text-muted-foreground">
+            Currently using {formatSize(user.used_bytes)}. Uploads past the limit are refused with a
+            “storage full” error.
+          </p>
+          <div className="space-y-1.5">
+            <Label htmlFor="quota">Limit</Label>
+            <Input
+              id="quota"
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setError('')
+              }}
+              placeholder="Unlimited"
+              autoFocus
+            />
+            {error ? (
+              <p className="text-xs text-destructive">{error}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Bytes with an optional KiB/MiB/GiB suffix.</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">Save limit</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [email, setEmail] = useState('')
   const [busy, setBusy] = useState(false)

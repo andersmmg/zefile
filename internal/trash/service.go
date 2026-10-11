@@ -1,9 +1,4 @@
 // Package trash implements reversible deletion.
-//
-// Deleting moves an entry into a reserved directory and records where it came
-// from; restoring puts it back; purging removes it for good. The filesystem
-// stays the source of truth — the table holds only what the filesystem cannot
-// say, which is where a trashed entry used to live.
 package trash
 
 import (
@@ -29,6 +24,7 @@ type Item struct {
 	IsDir        bool
 	Size         int64
 	DeletedAt    time.Time
+	DeletedBy    int64
 }
 
 // Service manages the trash.
@@ -49,7 +45,7 @@ func New(database *db.DB, fs storage.Trasher) *Service {
 	}
 }
 
-// Trash moves an entry into the trash and records how to restore it.
+// Trash moves an entry into the trash.
 func (s *Service) Trash(ctx context.Context, userID int64, p storage.Path) error {
 	id, err := s.fs.Trash(ctx, p)
 	if err != nil {
@@ -69,15 +65,13 @@ func (s *Service) Trash(ctx context.Context, userID int64, p storage.Path) error
 		IsDir:        boolToInt(isDir),
 	})
 	if err != nil {
-		// The move happened but the record did not. Put the entry back so it is
-		// not stranded in the trash directory with nothing to restore it.
 		_ = s.fs.Restore(ctx, id, p)
 		return err
 	}
 	return nil
 }
 
-// List returns the trashed items, newest first, sized from disk.
+// List returns trashed items, newest first.
 func (s *Service) List(ctx context.Context) ([]Item, error) {
 	rows, err := s.reads.ListTrash(ctx)
 	if err != nil {
@@ -96,20 +90,69 @@ func (s *Service) List(ctx context.Context) ([]Item, error) {
 			IsDir:        r.IsDir != 0,
 			Size:         size,
 			DeletedAt:    time.Unix(r.DeletedAt, 0),
+			DeletedBy:    r.DeletedBy.Int64,
 		})
 	}
 	return items, nil
 }
 
-// Restore returns a trashed item to its original location and reports where it
-// landed, so a caller can restore any bookkeeping keyed on the path.
-func (s *Service) Restore(ctx context.Context, id int64) (storage.Path, error) {
+// ListFor returns trashed items the caller may see.
+func (s *Service) ListFor(ctx context.Context, userID int64, isAdmin bool) ([]Item, error) {
+	items, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if isAdmin {
+		return items, nil
+	}
+	mine := items[:0]
+	for _, it := range items {
+		if it.DeletedBy != 0 && it.DeletedBy == userID {
+			mine = append(mine, it)
+		}
+	}
+	return mine, nil
+}
+
+func ownerOK(deletedBy, userID int64, isAdmin bool) bool {
+	return isAdmin || (userID != 0 && deletedBy != 0 && deletedBy == userID)
+}
+
+// OriginalPathFor reports where a trashed item would restore to.
+func (s *Service) OriginalPathFor(ctx context.Context, id, userID int64, isAdmin bool) (storage.Path, error) {
 	row, err := s.reads.GetTrash(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return storage.Path{}, ErrNotFound
 		}
 		return storage.Path{}, err
+	}
+	if !ownerOK(row.DeletedBy.Int64, userID, isAdmin) {
+		return storage.Path{}, ErrNotFound
+	}
+	dest, err := storage.ParsePath(row.OriginalPath)
+	if err != nil {
+		return storage.Path{}, err
+	}
+	return dest, nil
+}
+
+// Restore returns a trashed item to its original location.
+func (s *Service) Restore(ctx context.Context, id int64) (storage.Path, error) {
+	return s.RestoreFor(ctx, id, 0, true)
+}
+
+// RestoreFor restores what the caller may see.
+func (s *Service) RestoreFor(ctx context.Context, id, userID int64, isAdmin bool) (storage.Path, error) {
+	row, err := s.reads.GetTrash(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return storage.Path{}, ErrNotFound
+		}
+		return storage.Path{}, err
+	}
+	if !ownerOK(row.DeletedBy.Int64, userID, isAdmin) {
+		return storage.Path{}, ErrNotFound
 	}
 	dest, err := storage.ParsePath(row.OriginalPath)
 	if err != nil {
@@ -126,6 +169,11 @@ func (s *Service) Restore(ctx context.Context, id int64) (storage.Path, error) {
 
 // Purge removes one trashed item for good.
 func (s *Service) Purge(ctx context.Context, id int64) error {
+	return s.PurgeFor(ctx, id, 0, true)
+}
+
+// PurgeFor purges what the caller may see.
+func (s *Service) PurgeFor(ctx context.Context, id, userID int64, isAdmin bool) error {
 	row, err := s.reads.GetTrash(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -133,14 +181,16 @@ func (s *Service) Purge(ctx context.Context, id int64) error {
 		}
 		return err
 	}
+	if !ownerOK(row.DeletedBy.Int64, userID, isAdmin) {
+		return ErrNotFound
+	}
 	if err := s.fs.PurgeTrash(ctx, storage.TrashID(row.TrashName)); err != nil {
 		return err
 	}
 	return s.writes.DeleteTrash(ctx, id)
 }
 
-// PurgeExpired permanently removes items deleted before the cutoff, returning
-// how many went. It backs the configurable trash retention.
+// PurgeExpired purges items deleted before the cutoff.
 func (s *Service) PurgeExpired(ctx context.Context, before time.Time) (int, error) {
 	items, err := s.List(ctx)
 	if err != nil {
@@ -158,15 +208,21 @@ func (s *Service) PurgeExpired(ctx context.Context, before time.Time) (int, erro
 	return purged, nil
 }
 
-// Empty purges every trashed item. It stops at the first failure rather than
-// pressing on, so a disk error surfaces instead of being buried under later
-// successes.
+// Empty purges every trashed item.
 func (s *Service) Empty(ctx context.Context) error {
+	return s.EmptyFor(ctx, 0, true)
+}
+
+// EmptyFor empties what the caller may see.
+func (s *Service) EmptyFor(ctx context.Context, userID int64, isAdmin bool) error {
 	rows, err := s.reads.ListTrash(ctx)
 	if err != nil {
 		return err
 	}
 	for _, r := range rows {
+		if !ownerOK(r.DeletedBy.Int64, userID, isAdmin) {
+			continue
+		}
 		if err := s.fs.PurgeTrash(ctx, storage.TrashID(r.TrashName)); err != nil {
 			return err
 		}

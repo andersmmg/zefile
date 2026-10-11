@@ -12,6 +12,25 @@ secret ever circulates by email, and the link cannot be reused once accepted.
 Administrators manage accounts from the **Members** screen: promote to admin,
 disable (which ends every session immediately), or remove.
 
+## Home folders
+
+Every account gets a personal folder named after it (`/members/bob` for
+`bob`), with full control inside — upload, organise, and share from it
+freely. Members have no tree root: their files view starts inside the home,
+with no folder above it, and folders an administrator grants access to
+appear under **Shared with me** instead of floating in a tree they cannot
+see. (Public links someone creates live under **Shares**.) Signing in
+repairs a missing home automatically.
+
+The `/members` directory and the per-user folders in it are system-managed:
+only sign-in creates them. Nobody — administrators included — can add,
+remove or rename them, since that would orphan grants and ownership; inside
+a home, the owner and the administrators manage files freely.
+
+Trash and background jobs are private to each account along the same line: a
+member lists, restores and empties only what they deleted, and sees only
+their own jobs. Administrators see everyone's.
+
 ## Groups
 
 A group is a named set of users. Granting access to a group grants it to

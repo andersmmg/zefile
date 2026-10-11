@@ -68,7 +68,16 @@ export type AccessRule = {
 }
 
 /** UserSummary is an account in the admin's user list. */
-export type UserSummary = { id: number; username: string; is_admin: boolean; disabled: boolean }
+export type UserSummary = {
+  id: number
+  username: string
+  is_admin: boolean
+  disabled: boolean
+  /** Cap on owned bytes; 0 means unlimited. */
+  quota_bytes: number
+  /** Currently owned bytes. */
+  used_bytes: number
+}
 
 /** Group is a named set of users that rules can be granted to. */
 export type Group = { id: number; name: string; member_count: number }
@@ -126,7 +135,20 @@ export type Invitation = {
   expires_at: string
   token?: string
 }
-export type Space = { available: number; total: number; reserve: number; read_only: boolean }
+export type Space = {
+  available: number
+  total: number
+  reserve: number
+  read_only: boolean
+  /** The caller's owned bytes. */
+  used: number
+  /** The caller's cap in bytes; 0 means unlimited. */
+  quota: number
+  /** Bytes of all live files on the instance. */
+  instance_used: number
+  /** Instance cap when configured, else the volume size (0 when unknown). */
+  instance_total: number
+}
 
 /** Problem is the RFC 9457 error body every failure returns. */
 export type Problem = {
@@ -345,9 +367,8 @@ export const api = {
     }),
   listShares: () => request<{ shares: Share[] }>('/api/v1/shares'),
   revokeShare: (id: number) => request<void>(`/api/v1/shares/${id}`, { method: 'DELETE' }),
+  sharedWithMe: () => request<{ entries: Entry[] }>('/api/v1/shared-with-me'),
 
-  // Permissions. Effective perms tell the interface which actions to offer;
-  // listing/granting/revoking rules is admin-only and the server enforces it.
   effectivePermissions: (path: string) =>
     request<PermSet>(`/api/v1/permissions?path=${encodeURIComponent(path)}`),
   listAudit: (before?: number) =>
@@ -356,7 +377,7 @@ export const api = {
     ),
 
   listUsers: () => request<{ users: UserSummary[] }>('/api/v1/users'),
-  updateUser: (id: number, patch: { is_admin?: boolean; disabled?: boolean }) =>
+  updateUser: (id: number, patch: { is_admin?: boolean; disabled?: boolean; quota_bytes?: number }) =>
     request<UserSummary>(`/api/v1/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteUser: (id: number) => request<void>(`/api/v1/users/${id}`, { method: 'DELETE' }),
   listAccess: (path: string) =>
@@ -371,7 +392,6 @@ export const api = {
   }) => request<AccessRule>('/api/v1/access', { method: 'POST', body: JSON.stringify(body) }),
   revokeAccess: (id: number) => request<void>(`/api/v1/access/${id}`, { method: 'DELETE' }),
 
-  // Groups (admin): named sets of users that access can be granted to.
   listGroups: () => request<{ groups: Group[] }>('/api/v1/groups'),
   createGroup: (name: string) =>
     request<Group>('/api/v1/groups', { method: 'POST', body: JSON.stringify({ name }) }),

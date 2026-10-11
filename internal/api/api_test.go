@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"image"
@@ -29,10 +30,12 @@ import (
 	"github.com/krishna2206/zefile/internal/checksum"
 	"github.com/krishna2206/zefile/internal/db"
 	"github.com/krishna2206/zefile/internal/job"
+	"github.com/krishna2206/zefile/internal/quota"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
 	"github.com/krishna2206/zefile/internal/thumb"
 	"github.com/krishna2206/zefile/internal/trash"
+	"github.com/krishna2206/zefile/internal/upload"
 )
 
 // The tests here drive the server the way a client does: over HTTP, through the
@@ -46,6 +49,7 @@ type client struct {
 	root    string
 	auth    *auth.Service
 	aclEngi *acl.Engine
+	quota   *quota.Service
 }
 
 func newClient(t *testing.T) *client {
@@ -117,9 +121,12 @@ func newClient(t *testing.T) *client {
 	t.Cleanup(stopWorker)
 	go jobs.Run(workerCtx)
 
+	quotaSvc := quota.New(fs, 0, engine, service)
 	srv := httptest.NewServer(api.New(api.Options{
 		FS: fs, Auth: service, ACL: engine,
-		Trash: trash.New(database, fs),
+		Quota:   quotaSvc,
+		Uploads: upload.New(database, fs),
+		Trash:   trash.New(database, fs),
 		Shares: share.New(database, fs, share.GuardFunc(func(ctx context.Context, p storage.Path) (bool, error) {
 			return engine.Allows(ctx, acl.PermShare, p)
 		})),
@@ -131,7 +138,7 @@ func newClient(t *testing.T) *client {
 	}).Handler())
 	t.Cleanup(srv.Close)
 
-	return &client{t: t, server: srv, root: root, auth: service, aclEngi: engine}
+	return &client{t: t, server: srv, root: root, auth: service, aclEngi: engine, quota: quotaSvc}
 }
 
 // do issues a request, attaching the bearer token once signed in.
@@ -324,6 +331,14 @@ type trashItem struct {
 
 type trashList struct {
 	Items []trashItem `json:"items"`
+}
+
+type jobEntry struct {
+	ID int64 `json:"id"`
+}
+
+type jobList struct {
+	Jobs []jobEntry `json:"jobs"`
 }
 
 func TestDeleteMovesToTrashAndRestores(t *testing.T) {
@@ -1000,10 +1015,12 @@ func TestListingTraversesToGrants(t *testing.T) {
 	}](t, raw)
 	admin := c.token
 
-	// With no grants, bob's root lists empty rather than failing.
 	c.token = bob.Token
-	if got := decode[listing](t, mustList(c, "/")); len(got.Entries) != 0 {
-		t.Fatalf("no-grant root = %+v, want empty", got.Entries)
+	if resp, _ := c.do(http.MethodGet, "/api/v1/fs?path=/", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("fresh root = %d, want 403", resp.StatusCode)
+	}
+	if got := decode[listing](t, mustList(c, "/members/bob")); len(got.Entries) != 0 {
+		t.Fatalf("fresh home = %+v, want empty", got.Entries)
 	}
 
 	// Grant bob read on /partage.
@@ -1012,11 +1029,9 @@ func TestListingTraversesToGrants(t *testing.T) {
 		"subject_id": bob.User.ID, "path": "/partage", "perms": map[string]bool{"read": true}, "recursive": true,
 	})
 
-	// Bob's root now shows the granted folder and nothing else.
 	c.token = bob.Token
-	root := decode[listing](t, mustList(c, "/"))
-	if !hasEntry(root.Entries, "partage") || hasEntry(root.Entries, "private") {
-		t.Fatalf("root = %+v, want partage only", root.Entries)
+	if resp, _ := c.do(http.MethodGet, "/api/v1/fs?path=/", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("granted root = %d, want 403", resp.StatusCode)
 	}
 	// He can list inside it,
 	if inside := decode[listing](t, mustList(c, "/partage")); !hasEntry(inside.Entries, "note.txt") {
@@ -1668,4 +1683,450 @@ func TestStoredThumbnailIsServed(t *testing.T) {
 	if !bytes.Equal(raw, jpeg) {
 		t.Errorf("thumb = %v, want the stored bytes", raw)
 	}
+}
+
+func TestSpaceReportsUsageAndQuota(t *testing.T) {
+	c := newClient(t)
+	c.setUp() // admin krishna
+
+	if err := os.WriteFile(filepath.Join(c.root, "ledger.bin"), make([]byte, 1024), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	users := decode[struct {
+		Users []struct {
+			ID       int64  `json:"id"`
+			Username string `json:"username"`
+		} `json:"users"`
+	}](t, mustGet(c, "/api/v1/users"))
+	var adminID int64
+	for _, u := range users.Users {
+		if u.Username == "krishna" {
+			adminID = u.ID
+		}
+	}
+	if adminID == 0 {
+		t.Fatal("krishna missing from user list")
+	}
+	p := storage.MustParsePath("/ledger.bin")
+	if err := c.aclEngi.SetOwner(t.Context(), p, adminID); err != nil {
+		t.Fatalf("SetOwner: %v", err)
+	}
+	c.quota.Invalidate()
+
+	space := decode[struct {
+		Used          int64 `json:"used"`
+		Quota         int64 `json:"quota"`
+		InstanceUsed  int64 `json:"instance_used"`
+		InstanceTotal int64 `json:"instance_total"`
+	}](t, mustGet(c, "/api/v1/fs/space"))
+	if space.Used != 1024 {
+		t.Errorf("used = %d, want 1024", space.Used)
+	}
+	if space.Quota != 0 {
+		t.Errorf("quota = %d, want 0 (unlimited by default)", space.Quota)
+	}
+	if space.InstanceUsed != 1024 {
+		t.Errorf("instance_used = %d, want 1024", space.InstanceUsed)
+	}
+
+	resp, raw := c.do(http.MethodPost, "/api/v1/invitations", map[string]string{"email": "bob@example.com"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create invite = %d: %s", resp.StatusCode, raw)
+	}
+	invite := decode[struct {
+		Token string `json:"token"`
+	}](t, raw)
+	resp, raw = c.do(http.MethodPost, "/api/v1/invitations/accept", map[string]string{
+		"token": invite.Token, "username": "bob", "password": "correct horse battery",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("accept = %d: %s", resp.StatusCode, raw)
+	}
+	bob := decode[struct {
+		User userJSON `json:"user"`
+	}](t, raw).User
+
+	resp, raw = c.do(http.MethodPatch, fmt.Sprintf("/api/v1/users/%d", bob.ID), map[string]int64{"quota_bytes": 2048})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("set quota = %d: %s", resp.StatusCode, raw)
+	}
+	if got := decode[struct {
+		QuotaBytes int64 `json:"quota_bytes"`
+	}](t, raw); got.QuotaBytes != 2048 {
+		t.Errorf("quota_bytes = %d, want 2048", got.QuotaBytes)
+	}
+
+	resp, _ = c.do(http.MethodPatch, fmt.Sprintf("/api/v1/users/%d", bob.ID), map[string]int64{"quota_bytes": -1})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("negative quota = %d, want 400", resp.StatusCode)
+	}
+
+	listed := decode[struct {
+		Users []struct {
+			Username   string `json:"username"`
+			QuotaBytes int64  `json:"quota_bytes"`
+			UsedBytes  int64  `json:"used_bytes"`
+		} `json:"users"`
+	}](t, mustGet(c, "/api/v1/users"))
+	seen := map[string][2]int64{}
+	for _, u := range listed.Users {
+		seen[u.Username] = [2]int64{u.QuotaBytes, u.UsedBytes}
+	}
+	if seen["bob"] != [2]int64{2048, 0} {
+		t.Errorf("bob = %v, want {2048 0}", seen["bob"])
+	}
+	if seen["krishna"] != [2]int64{0, 1024} {
+		t.Errorf("krishna = %v, want {0 1024}", seen["krishna"])
+	}
+}
+
+func TestMemberHomeUpload(t *testing.T) {
+	c := newClient(t)
+	c.setUp() // admin krishna
+
+	if resp, raw := c.do(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": "/shared"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("mkdir /shared = %d: %s", resp.StatusCode, raw)
+	}
+
+	bobToken, _ := inviteBob(t, c)
+
+	c.token = bobToken
+	if resp, _ := c.do(http.MethodGet, "/api/v1/fs", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("bob root = %d, want 403", resp.StatusCode)
+	}
+	if got := decode[listing](t, mustGet(c, "/api/v1/fs?path=/members/bob")); len(got.Entries) != 0 {
+		t.Fatalf("bob home = %+v, want empty", got.Entries)
+	}
+
+	body := []byte("bob was here")
+	loc := tusCreate(t, c, "/members/bob/note.txt", int64(len(body)))
+	tusWrite(t, c, loc, 0, body, true)
+
+	listed := decode[listing](t, mustGet(c, "/api/v1/fs?path=/members/bob"))
+	if len(listed.Entries) != 1 || listed.Entries[0].Size != int64(len(body)) {
+		t.Fatalf("/members/bob = %+v, want the uploaded file", listed.Entries)
+	}
+
+	if resp, raw := tusCreateRaw(c, "/shared/evil.txt", 3); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("upload outside home = %d: %s, want 403", resp.StatusCode, raw)
+	}
+}
+
+func TestLoginBackfillsHome(t *testing.T) {
+	c := newClient(t)
+	c.setUp()
+	_, bobID := inviteBob(t, c)
+	if err := c.aclEngi.RevokeAllForSubject(t.Context(), acl.SubjectUser, bobID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if err := os.RemoveAll(filepath.Join(c.root, "members", "bob")); err != nil {
+		t.Fatalf("remove home: %v", err)
+	}
+
+	resp, raw := c.do(http.MethodPost, "/api/v1/auth/login", map[string]string{
+		"username": "bob", "password": "correct horse battery",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("login = %d: %s", resp.StatusCode, raw)
+	}
+	c.token = decode[struct {
+		Token string `json:"token"`
+	}](t, raw).Token
+
+	if resp, _ := c.do(http.MethodGet, "/api/v1/fs", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("bob root after relogin = %d, want 403", resp.StatusCode)
+	}
+	got := decode[listing](t, mustGet(c, "/api/v1/fs?path=/members/bob"))
+	if len(got.Entries) != 0 {
+		t.Fatalf("bob home after relogin = %+v, want empty", got.Entries)
+	}
+	loc := tusCreate(t, c, "/members/bob/again.txt", 1)
+	tusWrite(t, c, loc, 0, []byte("x"), true)
+}
+
+func inviteBob(t *testing.T, c *client) (string, int64) {
+	t.Helper()
+	admin := c.token
+	resp, raw := c.do(http.MethodPost, "/api/v1/invitations", map[string]string{"email": "bob@example.com"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create invite = %d: %s", resp.StatusCode, raw)
+	}
+	invite := decode[struct {
+		Token string `json:"token"`
+	}](t, raw)
+	resp, raw = c.do(http.MethodPost, "/api/v1/invitations/accept", map[string]string{
+		"token": invite.Token, "username": "bob", "password": "correct horse battery",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("accept = %d: %s", resp.StatusCode, raw)
+	}
+	accepted := decode[struct {
+		User  userJSON `json:"user"`
+		Token string   `json:"token"`
+	}](t, raw)
+	c.token = admin
+	if accepted.User.Username != "bob" {
+		t.Fatalf("accepted user = %+v, want bob", accepted.User)
+	}
+	return accepted.Token, accepted.User.ID
+}
+
+func tusCreate(t *testing.T, c *client, path string, size int64) string {
+	t.Helper()
+	resp, _ := tusCreateRaw(c, path, size)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("tus create %s = %d", path, resp.StatusCode)
+	}
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		t.Fatalf("tus create %s returned no Location", path)
+	}
+	resp.Body.Close()
+	return loc
+}
+
+func tusCreateRaw(c *client, path string, size int64) (*http.Response, []byte) {
+	c.t.Helper()
+	meta := "path " + base64.StdEncoding.EncodeToString([]byte(path))
+	req, err := http.NewRequestWithContext(c.t.Context(), http.MethodPost, c.server.URL+"/api/v1/uploads", nil)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Tus-Resumable", "1.0.0")
+	req.Header.Set("Upload-Length", strconv.FormatInt(size, 10))
+	req.Header.Set("Upload-Metadata", meta)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	return resp, raw
+}
+
+func tusWrite(t *testing.T, c *client, loc string, offset int64, body []byte, _ bool) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPatch, c.server.URL+loc, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Tus-Resumable", "1.0.0")
+	req.Header.Set("Content-Type", "application/offset+octet-stream")
+	req.Header.Set("Upload-Offset", strconv.FormatInt(offset, 10))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tus write = %d: %s", resp.StatusCode, raw)
+	}
+	var done struct {
+		Complete bool `json:"complete"`
+	}
+	if err := json.Unmarshal(raw, &done); err != nil || !done.Complete {
+		t.Fatalf("tus write = %+v, %v; want complete", done, err)
+	}
+}
+
+func TestSharedWithMe(t *testing.T) {
+	c := newClient(t)
+	c.setUp() // admin krishna
+
+	if resp, raw := c.do(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": "/partage"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("mkdir /partage = %d: %s", resp.StatusCode, raw)
+	}
+	if resp, raw := c.do(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": "/private"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("mkdir /private = %d: %s", resp.StatusCode, raw)
+	}
+
+	bobToken, bobID := inviteBob(t, c)
+
+	grant := func(path string) {
+		t.Helper()
+		resp, raw := c.do(http.MethodPost, "/api/v1/access", map[string]any{
+			"subject_id": bobID, "path": path, "perms": map[string]bool{"read": true}, "recursive": true,
+		})
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("grant %s = %d: %s", path, resp.StatusCode, raw)
+		}
+	}
+	grant("/partage")
+	grant("/ghost")
+
+	admin := c.token
+	c.token = bobToken
+	got := decode[listing](t, mustGet(c, "/api/v1/shared-with-me"))
+	c.token = admin
+	if len(got.Entries) != 1 || got.Entries[0].Path != "/partage" || !got.Entries[0].IsDir {
+		t.Fatalf("shared-with-me = %+v, want only /partage", got.Entries)
+	}
+
+	c.token = bobToken
+	if resp, _ := c.do(http.MethodGet, "/api/v1/fs", nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("bob root = %d, want 403", resp.StatusCode)
+	}
+	c.token = admin
+
+	if got := decode[listing](t, mustGet(c, "/api/v1/shared-with-me")); len(got.Entries) != 0 {
+		t.Fatalf("admin shared-with-me = %+v, want empty", got.Entries)
+	}
+}
+
+func TestTrashIsPrivate(t *testing.T) {
+	c := newClient(t)
+	c.setUp() // admin krishna
+	bobToken, _ := inviteBob(t, c)
+
+	seed := func(dir, name string) {
+		t.Helper()
+		if resp, raw := c.do(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": dir}); resp.StatusCode != http.StatusCreated {
+			t.Fatalf("mkdir %s = %d: %s", dir, resp.StatusCode, raw)
+		}
+		if err := os.WriteFile(filepath.Join(c.root, strings.TrimPrefix(dir, "/"), name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	admin := c.token
+
+	c.token = bobToken
+	seed("/members/bob/docs", "note.txt")
+	if resp, raw := c.do(http.MethodDelete, "/api/v1/fs?path=/members/bob/docs/note.txt", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("bob delete = %d: %s", resp.StatusCode, raw)
+	}
+	c.token = admin
+	seed("/secret", "plan.txt")
+	if resp, raw := c.do(http.MethodDelete, "/api/v1/fs?path=/secret/plan.txt", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("admin delete = %d: %s", resp.StatusCode, raw)
+	}
+
+	c.token = bobToken
+	mine := decode[trashList](t, mustGet(c, "/api/v1/trash"))
+	c.token = admin
+	all := decode[trashList](t, mustGet(c, "/api/v1/trash"))
+	if len(mine.Items) != 1 || mine.Items[0].OriginalPath != "/members/bob/docs/note.txt" {
+		t.Fatalf("bob trash = %+v, want only his note", mine.Items)
+	}
+	if len(all.Items) != 2 {
+		t.Fatalf("admin trash = %+v, want both", all.Items)
+	}
+	var foreign int64
+	for _, it := range all.Items {
+		if it.OriginalPath == "/secret/plan.txt" {
+			foreign = it.ID
+		}
+	}
+
+	c.token = bobToken
+	if resp, raw := c.do(http.MethodPost, fmt.Sprintf("/api/v1/trash/%d/restore", foreign), nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("restore foreign = %d: %s, want 404", resp.StatusCode, raw)
+	}
+	if resp, raw := c.do(http.MethodDelete, fmt.Sprintf("/api/v1/trash/%d", foreign), nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("purge foreign = %d: %s, want 404", resp.StatusCode, raw)
+	}
+
+	if resp, raw := c.do(http.MethodDelete, "/api/v1/trash", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("empty = %d: %s", resp.StatusCode, raw)
+	}
+	if items := decode[trashList](t, mustGet(c, "/api/v1/trash")).Items; len(items) != 0 {
+		t.Fatalf("bob trash after empty = %+v, want none", items)
+	}
+	c.token = admin
+	if items := decode[trashList](t, mustGet(c, "/api/v1/trash")).Items; len(items) != 1 || items[0].ID != foreign {
+		t.Fatalf("admin trash after bob empty = %+v, want the plan", items)
+	}
+
+	if resp, raw := c.do(http.MethodPost, fmt.Sprintf("/api/v1/trash/%d/restore", foreign), nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("admin restore = %d: %s", resp.StatusCode, raw)
+	}
+}
+
+func TestJobsArePrivate(t *testing.T) {
+	c := newClient(t)
+	c.setUp() // admin krishna
+	bobToken, _ := inviteBob(t, c)
+
+	if resp, raw := c.do(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": "/dossier"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("mkdir = %d: %s", resp.StatusCode, raw)
+	}
+	resp, raw := c.do(http.MethodPost, "/api/v1/fs/copy", map[string]string{"from": "/dossier", "to": "/copie"})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("copy dir = %d: %s, want 202", resp.StatusCode, raw)
+	}
+	jobID := decode[struct {
+		Job struct {
+			ID int64 `json:"id"`
+		} `json:"job"`
+	}](t, raw).Job.ID
+
+	if jobs := decode[jobList](t, mustGet(c, "/api/v1/jobs")).Jobs; len(jobs) != 1 || jobs[0].ID != jobID {
+		t.Fatalf("admin jobs = %+v, want the copy", jobs)
+	}
+
+	admin := c.token
+	c.token = bobToken
+	if jobs := decode[jobList](t, mustGet(c, "/api/v1/jobs")).Jobs; len(jobs) != 0 {
+		t.Fatalf("bob jobs = %+v, want none", jobs)
+	}
+	if resp, raw := c.do(http.MethodGet, fmt.Sprintf("/api/v1/jobs/%d", jobID), nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("bob get foreign job = %d: %s, want 404", resp.StatusCode, raw)
+	}
+	if resp, raw := c.do(http.MethodPost, fmt.Sprintf("/api/v1/jobs/%d/cancel", jobID), nil); resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("bob cancel foreign job = %d: %s, want 404", resp.StatusCode, raw)
+	}
+	c.token = admin
+}
+
+func TestMembersDirIsSystemManaged(t *testing.T) {
+	c := newClient(t)
+	c.setUp() // admin krishna
+	bobToken, _ := inviteBob(t, c)
+	admin := c.token
+
+	refused := func(method, path string, body any) {
+		t.Helper()
+		if resp, raw := c.do(method, path, body); resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("%s %s = %d: %s, want 403", method, path, resp.StatusCode, raw)
+		}
+	}
+
+	refused(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": "/members"})
+	refused(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": "/members/eve"})
+	refused(http.MethodDelete, "/api/v1/fs?path=/members", nil)
+	refused(http.MethodDelete, "/api/v1/fs?path=/members/bob", nil)
+	refused(http.MethodPost, "/api/v1/fs/move", map[string]string{"from": "/members/bob", "to": "/members/robert"})
+	refused(http.MethodPost, "/api/v1/fs/move", map[string]string{"from": "/members/bob", "to": "/elsewhere"})
+	if resp, raw := tusCreateRaw(c, "/members/drop.txt", 3); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("upload to /members = %d: %s, want 403", resp.StatusCode, raw)
+	}
+
+	c.token = bobToken
+	refused(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": "/members/eve"})
+	refused(http.MethodDelete, "/api/v1/fs?path=/members/bob", nil)
+	c.token = admin
+
+	if resp, raw := c.do(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": "/members/bob/docs"}); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("mkdir in home = %d: %s", resp.StatusCode, raw)
+	}
+	if resp, raw := c.do(http.MethodPost, "/api/v1/fs/move", map[string]string{"from": "/members/bob/docs", "to": "/members/bob/papers"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("move in home = %d: %s", resp.StatusCode, raw)
+	}
+	if resp, raw := c.do(http.MethodDelete, "/api/v1/fs?path=/members/bob/papers", nil); resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete in home = %d: %s", resp.StatusCode, raw)
+	}
+
+	c.token = bobToken
+	if resp, _ := c.do(http.MethodGet, "/api/v1/fs?path=/members/bob", nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("bob home = %d, want 200", resp.StatusCode)
+	}
+	c.token = admin
 }

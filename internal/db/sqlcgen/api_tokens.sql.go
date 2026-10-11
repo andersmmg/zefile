@@ -53,7 +53,7 @@ func (q *Queries) CreateAPIToken(ctx context.Context, arg CreateAPITokenParams) 
 }
 
 const getAPITokenByHash = `-- name: GetAPITokenByHash :one
-SELECT api_tokens.id, api_tokens.user_id, api_tokens.name, api_tokens.token_hash, api_tokens.prefix, api_tokens.scopes, api_tokens.created_at, api_tokens.last_used_at, api_tokens.expires_at, api_tokens.revoked_at, users.id, users.username, users.email, users.password_hash, users.is_admin, users.totp_secret, users.disabled, users.created_at, users.updated_at
+SELECT api_tokens.id, api_tokens.user_id, api_tokens.name, api_tokens.token_hash, api_tokens.prefix, api_tokens.scopes, api_tokens.created_at, api_tokens.last_used_at, api_tokens.expires_at, api_tokens.revoked_at, users.id, users.username, users.email, users.password_hash, users.is_admin, users.totp_secret, users.disabled, users.created_at, users.updated_at, users.quota_bytes
 FROM api_tokens
 JOIN users ON users.id = api_tokens.user_id
 WHERE api_tokens.token_hash = ?
@@ -99,6 +99,7 @@ func (q *Queries) GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashPa
 		&i.User.Disabled,
 		&i.User.CreatedAt,
 		&i.User.UpdatedAt,
+		&i.User.QuotaBytes,
 	)
 	return i, err
 }

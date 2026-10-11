@@ -26,6 +26,10 @@ UPDATE users SET is_admin = ?, updated_at = ? WHERE id = ?;
 -- name: SetUserDisabled :exec
 UPDATE users SET disabled = ?, updated_at = ? WHERE id = ?;
 
+-- name: SetUserQuota :exec
+-- A per-account storage cap in bytes. Zero means unlimited.
+UPDATE users SET quota_bytes = ?, updated_at = ? WHERE id = ?;
+
 -- name: DeleteUser :exec
 -- Sessions and file ownership cascade with the row; ACL rules are keyed by a
 -- subject type as well as an id, so they carry no foreign key and are cleared

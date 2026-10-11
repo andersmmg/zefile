@@ -258,27 +258,32 @@ func (s *S3) copyKey(ctx context.Context, from, to string) error {
 	if head == nil {
 		return ErrNotExist
 	}
+	return s.copyKeySized(ctx, from, to, aws.ToInt64(head.ContentLength))
+}
+
+func (s *S3) copyKeySized(ctx context.Context, from, to string, size int64) error {
 	if strings.HasSuffix(from, "/") {
-		// Markers travel by recreation: some providers refuse
-		// trailing-slash keys as a copy source. A trailing-slash key
-		// carrying bytes is not a marker, so it is refused instead.
-		if aws.ToInt64(head.ContentLength) != 0 {
+		if size != 0 {
 			return fmt.Errorf("storage: cannot copy %q: trailing-slash object holds data", from)
 		}
 		return s.putMarker(ctx, to)
 	}
-	if aws.ToInt64(head.ContentLength) < copyThreshold {
+	if size < copyThreshold {
 		_, err := s.client.CopyObject(ctx, &awss3.CopyObjectInput{
-			Bucket:             aws.String(s.bucket),
-			Key:                aws.String(to),
-			CopySource:         aws.String(s.copySource(from)),
-			ContentType:        head.ContentType,
-			ContentDisposition: head.ContentDisposition,
-			MetadataDirective:  types.MetadataDirectiveReplace,
+			Bucket:     aws.String(s.bucket),
+			Key:        aws.String(to),
+			CopySource: aws.String(s.copySource(from)),
 		})
 		return mapS3Err(err)
 	}
 
+	head, err := s.head(ctx, from)
+	if err != nil {
+		return err
+	}
+	if head == nil {
+		return ErrNotExist
+	}
 	up, err := s.client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
 		Bucket:             aws.String(s.bucket),
 		Key:                aws.String(to),
@@ -289,7 +294,6 @@ func (s *S3) copyKey(ctx context.Context, from, to string) error {
 		return mapS3Err(err)
 	}
 	uploadID := aws.ToString(up.UploadId)
-	size := aws.ToInt64(head.ContentLength)
 	var completed []types.CompletedPart
 	for start, n := int64(0), 1; start < size; n++ {
 		end := min(start+copyPartSize, size) - 1

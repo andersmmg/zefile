@@ -93,6 +93,7 @@ type User struct {
 	Disabled    bool
 	TOTPEnabled bool
 	CreatedAt   time.Time
+	QuotaBytes  int64
 }
 
 // GetUser returns one account by id.
@@ -135,8 +136,32 @@ func (s *Service) SetUserDisabled(ctx context.Context, id int64, disabled bool) 
 	return nil
 }
 
-// DeleteUser removes an account. Its sessions and file ownership cascade with
-// the row; the caller clears its ACL rules, which carry no foreign key.
+// SetUserQuota caps an account's owned bytes. Zero means unlimited.
+func (s *Service) SetUserQuota(ctx context.Context, id int64, quotaBytes int64) error {
+	if quotaBytes < 0 {
+		return fmt.Errorf("auth: quota must not be negative")
+	}
+	if err := s.writes.SetUserQuota(ctx, sqlcgen.SetUserQuotaParams{
+		QuotaBytes: quotaBytes,
+		UpdatedAt:  s.now().Unix(),
+		ID:         id,
+	}); err != nil {
+		return fmt.Errorf("auth: set quota: %w", err)
+	}
+	return nil
+}
+
+// UserQuota reads an account's storage cap. Zero means unlimited.
+func (s *Service) UserQuota(ctx context.Context, id int64) (int64, error) {
+	u, err := s.GetUser(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	return u.QuotaBytes, nil
+}
+
+// DeleteUser removes an account.
+
 func (s *Service) DeleteUser(ctx context.Context, id int64) error {
 	if err := s.writes.DeleteUser(ctx, id); err != nil {
 		return fmt.Errorf("auth: delete user: %w", err)
@@ -767,6 +792,7 @@ func toUser(row sqlcgen.User) User {
 		Disabled:    row.Disabled == 1,
 		TOTPEnabled: row.TotpSecret.Valid && row.TotpSecret.String != "",
 		CreatedAt:   time.Unix(row.CreatedAt, 0).UTC(),
+		QuotaBytes:  row.QuotaBytes,
 	}
 }
 

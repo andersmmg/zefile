@@ -8,20 +8,13 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/krishna2206/zefile/internal/quota"
 	"github.com/krishna2206/zefile/internal/storage"
 	"github.com/krishna2206/zefile/internal/upload"
 )
 
-// The tus core protocol, on the application origin rather than the content one.
-//
-// The design document places chunk writes on the content host. That separation
-// exists to stop a hostile file from executing where the session lives, which
-// is a property of *serving* content, not of receiving it. Keeping uploads here
-// means the browser sends them same-origin, with no preflight and no second
-// credential to arrange, and costs nothing in isolation.
 const tusVersion = "1.0.0"
 
-// tusHeaders marks every response so a standard client recognises the server.
 func tusHeaders(w http.ResponseWriter) {
 	w.Header().Set("Tus-Resumable", tusVersion)
 }
@@ -34,11 +27,7 @@ func (s *Server) handleUploadOptions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusNoContent, nil)
 }
 
-// handleUploadCreate opens a session.
-//
-// Metadata travels in the tus header rather than in a JSON body, so an
-// off-the-shelf client works unchanged. The keys are `path` and, optionally,
-// `checksum`.
+// handleUploadCreate opens an upload session.
 func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 	tusHeaders(w)
 
@@ -60,6 +49,9 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !guardMembersTop(w, r, p) {
+		return
+	}
 
 	session, err := s.uploads.Create(r.Context(), c.user.ID, p, size, metadata["checksum"])
 	if err != nil {
@@ -67,8 +59,6 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The caller owns what they are about to upload, recorded now so an
-	// interrupted transfer still leaves ownership consistent with the session.
 	if err := s.acl.SetOwner(r.Context(), p, c.user.ID); err != nil {
 		writeError(w, r, err)
 		return
@@ -80,12 +70,8 @@ func (s *Server) handleUploadCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusCreated, uploadResponse(session))
 }
 
-// handleUploadOffset answers where to resume from. It is the first thing a
-// client asks after a dropped connection.
 func (s *Server) handleUploadOffset(w http.ResponseWriter, r *http.Request) {
 	tusHeaders(w)
-	// An offset must never be served from a cache: a stale one would have the
-	// client resume at the wrong place and produce a corrupt file.
 	w.Header().Set("Cache-Control", "no-store")
 
 	session, err := s.uploads.Offset(r.Context(), r.PathValue("token"))
@@ -120,9 +106,6 @@ func (s *Server) handleUploadWrite(w http.ResponseWriter, r *http.Request) {
 
 	session, err := s.uploads.Write(r.Context(), r.PathValue("token"), offset, r.Body)
 	if err != nil {
-		// A write that failed part way still moved the offset forward, and the
-		// client needs to know where to resume from — so the header is set even
-		// on the error path.
 		if session.Offset > 0 {
 			w.Header().Set("Upload-Offset", strconv.FormatInt(session.Offset, 10))
 		}
@@ -136,11 +119,10 @@ func (s *Server) handleUploadWrite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.thumbAfterUpload(r.Context(), session)
+	s.usageAfterUpload()
 	writeJSON(w, r, http.StatusOK, uploadResponse(session))
 }
 
-// handleUploadParts mints presigned part URLs for a direct session.
-// The body names the 1-based part numbers: {"parts":[3,4,5,6]}.
 func (s *Server) handleUploadParts(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Parts []int `json:"parts"`
@@ -160,8 +142,6 @@ func (s *Server) handleUploadParts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, map[string]any{"parts": parts})
 }
 
-// handleUploadComplete publishes a direct session once storage holds
-// every declared byte.
 func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
 	session, err := s.uploads.Complete(r.Context(), r.PathValue("token"))
 	if err != nil {
@@ -169,11 +149,16 @@ func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.thumbAfterUpload(r.Context(), session)
+	s.usageAfterUpload()
 	writeJSON(w, r, http.StatusOK, uploadResponse(session))
 }
 
-// thumbAfterUpload asks the thumbnail worker to depict a freshly stored
-// file. Best-effort: a miss on the next tile view enqueues the same job.
+func (s *Server) usageAfterUpload() {
+	if s.quota != nil {
+		s.quota.Invalidate()
+	}
+}
+
 func (s *Server) thumbAfterUpload(ctx context.Context, session upload.Session) {
 	if s.thumbs == nil {
 		return
@@ -218,8 +203,6 @@ func uploadResponse(s upload.Session) uploadStatus {
 	}
 }
 
-// parseUploadMetadata decodes the tus metadata header: comma-separated pairs of
-// a key and a base64 value.
 func parseUploadMetadata(header string) map[string]string {
 	out := map[string]string{}
 	for _, pair := range strings.Split(header, ",") {
@@ -229,7 +212,7 @@ func parseUploadMetadata(header string) map[string]string {
 		}
 		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value))
 		if err != nil {
-			continue // A malformed pair is ignored; a missing path is caught later.
+			continue
 		}
 		out[key] = string(decoded)
 	}
@@ -242,8 +225,6 @@ func writeUploadError(w http.ResponseWriter, r *http.Request, err error) {
 		writeProblem(w, r, http.StatusNotFound, CodeNotFound,
 			"No such upload", "This upload session is unknown, expired, or already finished.")
 	case errors.Is(err, upload.ErrOffsetMismatch):
-		// 409 is what tus specifies, and it is the one a client is written to
-		// handle by re-reading the offset.
 		writeProblem(w, r, http.StatusConflict, CodeConflict,
 			"Offset mismatch", err.Error())
 	case errors.Is(err, upload.ErrChecksumMismatch):
@@ -255,6 +236,9 @@ func writeUploadError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, upload.ErrTooLarge):
 		writeProblem(w, r, http.StatusRequestEntityTooLarge, CodeTooLarge,
 			"Too large", "The declared length is beyond what this instance accepts.")
+	case errors.Is(err, quota.ErrQuotaExceeded):
+		writeProblem(w, r, http.StatusInsufficientStorage, CodeNoSpace,
+			"Storage quota exceeded", err.Error())
 	case errors.Is(err, upload.ErrWrongMode):
 		writeProblem(w, r, http.StatusConflict, CodeConflict,
 			"Wrong transfer mode", "This upload receives bytes directly into storage: PUT each part to its presigned URL, then complete the session.")

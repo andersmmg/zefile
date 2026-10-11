@@ -53,7 +53,7 @@ import {
   type User,
 } from './api'
 import { uploadFile, type UploadProgress } from './upload'
-import { categoryLabel, entryKind, formatRelativeTime, isImage, isVideo } from '@/lib/files'
+import { categoryLabel, entryKind, formatRelativeTime, isImage, isMembersTop, isVideo } from '@/lib/files'
 import { dropEntries, readEntries } from '@/lib/dnd'
 import { Thumbnail } from '@/components/thumbnail'
 import { PreviewOverlay } from '@/components/preview-overlay'
@@ -244,7 +244,8 @@ type DialogState =
   | { kind: 'access'; entry: Entry }
 
 export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
-  const [path, setPath] = useState('/')
+  const homePath = user.is_admin ? '/' : `/members/${user.username}`
+  const [path, setPath] = useState(() => homePath)
   const [entries, setEntries] = useState<Entry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -263,7 +264,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const [selection, setSelection] = useState<Set<string>>(() => new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
   const [screen, setScreen] = useState<
-    'files' | 'trash' | 'shared' | 'members' | 'settings' | 'activity'
+    'files' | 'trash' | 'shared' | 'shared-with-me' | 'members' | 'settings' | 'activity'
   >('files')
   const [preview, setPreview] = useState<Entry | null>(null)
   const [inlinePreview, setInlinePreview] = useState(false)
@@ -619,12 +620,12 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     [anchor, ordered],
   )
 
-  // moveInto moves the given paths into a folder, dropping the ones that would
-  // be no-ops or invalid: an entry onto itself, an entry already in the folder,
-  // or a folder into its own subtree. Names that collide surface as an error
-  // from the server rather than overwriting.
   const moveInto = useCallback(
     async (dirPath: string, dirName: string, paths: string[]) => {
+      if (dirPath === '/members') {
+        toast.error('The members folder is managed automatically.')
+        return
+      }
       const targets = paths.filter(
         (p) => p !== dirPath && parentOf(p) !== dirPath && !dirPath.startsWith(p + '/'),
       )
@@ -675,7 +676,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     },
     isSelected: (entry) => selection.has(entry.path),
     isShared: (entry) => sharedPaths.has(entry.path),
-    canPaste: clipboard !== null,
+    canPaste: clipboard !== null && path !== '/members',
     perms,
     dragPaths: (entry) =>
       selection.has(entry.path) && selected.length > 0 ? selected.map((e) => e.path) : [entry.path],
@@ -691,10 +692,12 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   }
 
   // Paste the clipboard into the current folder, then clear it — pasting
-  // consumes the clipboard, so the Paste affordances disappear afterwards.
-  // Names that would collide gain a "(copy)" suffix rather than overwriting.
   const doPaste = useCallback(async () => {
     if (!clipboard) return
+    if (path === '/members') {
+      toast.error('The members folder is managed automatically.')
+      return
+    }
     const taken = new Set(entries.map((e) => e.name))
     let done = 0
     let queued = 0
@@ -753,6 +756,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         e.preventDefault()
         setClipboard({ mode: 'copy', entries: selected })
       } else if (key === 'x' && selected.length > 0) {
+        if (selected.some((e) => isMembersTop(e.path))) return
         e.preventDefault()
         setClipboard({ mode: 'cut', entries: selected })
       } else if (key === 'v' && clipboard) {
@@ -896,8 +900,8 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   }
 
   const onlyOne = selected.length === 1 ? selected[0]! : null
+  const canCreateHere = perms.write && path !== '/members'
 
-  // The scrollable list/grid, extracted so it can be shown with or without the
   // empty-area create menu depending on whether the caller can write here.
   const browseArea = (
     <div className="min-h-0 flex-1">
@@ -925,14 +929,15 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         space={space}
         section={screen}
         create={createActions}
-        canCreate={perms.write}
+        canCreate={canCreateHere}
         onHome={() => {
           setScreen('files')
-          setPath('/')
+          setPath(homePath)
           setQuery('')
         }}
         onTrash={() => setScreen('trash')}
         onShared={() => setScreen('shared')}
+        onSharedWithMe={() => setScreen('shared-with-me')}
         onMembers={() => setScreen('members')}
         onActivity={() => setScreen('activity')}
         onSettings={() => setScreen('settings')}
@@ -943,7 +948,25 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       {screen === 'trash' ? (
         <TrashScreen onChanged={refreshSpace} />
       ) : screen === 'shared' ? (
-        <SharesScreen />
+        <SharesScreen
+          me={user}
+          mode="links"
+          onOpen={(p) => {
+            setScreen('files')
+            setPath(p)
+            setQuery('')
+          }}
+        />
+      ) : screen === 'shared-with-me' ? (
+        <SharesScreen
+          me={user}
+          mode="incoming"
+          onOpen={(p) => {
+            setScreen('files')
+            setPath(p)
+            setQuery('')
+          }}
+        />
       ) : screen === 'members' ? (
         <MembersScreen me={user} />
       ) : screen === 'settings' ? (
@@ -954,9 +977,8 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       <div
         className="relative flex min-w-0 flex-1 flex-col"
         onDragOver={(e) => {
-          // An in-app move is not an upload: leave it to the folder rows and keep
-          // the "Drop to upload" overlay away.
           if (e.dataTransfer.types.includes(MOVE_MIME)) return
+          if (path === '/members') return
           e.preventDefault()
           setDragging(true)
         }}
@@ -970,6 +992,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           }
           e.preventDefault()
           setDragging(false)
+          if (path === '/members') return
           // Capture entries synchronously: a DataTransfer is only valid during
           // the drop. Folders come through the entries API (no native prompt);
           // a browser that exposes none falls back to the flat file list.
@@ -1000,7 +1023,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   Download
                 </Button>
               )}
-              {onlyOne && perms.write && perms.delete && (
+              {onlyOne && perms.write && perms.delete && !isMembersTop(onlyOne.path) && (
                 <Button variant="ghost" size="sm" onClick={() => actions.rename(onlyOne)}>
                   <Pencil />
                   Rename
@@ -1019,7 +1042,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   Copy
                 </Button>
               )}
-              {perms.delete && (
+              {perms.delete && !selected.some((e) => isMembersTop(e.path)) && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1032,7 +1055,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   Move
                 </Button>
               )}
-              {perms.delete && (
+              {perms.delete && !selected.some((e) => isMembersTop(e.path)) && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1072,7 +1095,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
             </div>
 
             <div className="ml-auto flex items-center gap-2">
-              {clipboard && perms.write && (
+              {clipboard && canCreateHere && (
                 <button
                   type="button"
                   onClick={() => void doPaste()}
@@ -1100,6 +1123,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
 
         <Breadcrumb
           path={path}
+          home={homePath}
           onNavigate={(p) => {
             setPath(p)
             setQuery('')
@@ -1118,7 +1142,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           </p>
         )}
 
-        {perms.write ? (
+        {canCreateHere ? (
           <ContextMenu>
             <ContextMenuTrigger asChild>{browseArea}</ContextMenuTrigger>
             <ContextMenuContent className="w-52">
@@ -1139,7 +1163,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           browseArea
         )}
 
-        {dragging && (
+        {dragging && path !== '/members' && (
           <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-primary/10 backdrop-blur-sm">
             <div className="rounded-xl border-2 border-dashed border-primary bg-card px-8 py-6 text-lg font-medium text-primary">
               Drop to upload
@@ -1326,19 +1350,20 @@ function intentOf(e: MouseEvent): ClickIntent {
  * upload overlay, and `isTarget` says whether this folder is the one hovered.
  */
 function moveDragProps(entry: Entry, actions: EntryActions) {
+  const managed = isMembersTop(entry.path)
   const isTarget = entry.is_dir && actions.dropTarget === entry.path
   return {
     isTarget,
-    draggable: true,
+    draggable: !managed,
     onDragStart: (e: DragEvent) => {
+      if (managed) return
       e.dataTransfer.setData(MOVE_MIME, JSON.stringify(actions.dragPaths(entry)))
       e.dataTransfer.effectAllowed = 'move'
     },
     onDragEnd: () => actions.setDropTarget(null),
     onDragOver: (e: DragEvent) => {
       if (!entry.is_dir || !e.dataTransfer.types.includes(MOVE_MIME)) return
-      // Claim the drop here so it does not fall through to the page's upload
-      // handler, and mark this folder as the target for the highlight.
+      if (entry.path === '/members') return
       e.preventDefault()
       e.stopPropagation()
       e.dataTransfer.dropEffect = 'move'
@@ -1451,16 +1476,22 @@ function DisplayOptions({
   )
 }
 
-function Breadcrumb({ path, onNavigate }: { path: string; onNavigate: (p: string) => void }) {
-  const segments = path === '/' ? [] : path.slice(1).split('/')
+function Breadcrumb({ path, home, onNavigate }: { path: string; home: string; onNavigate: (p: string) => void }) {
+  const inHome = path === home || (home !== '/' && path.startsWith(home + '/'))
+  const relative = inHome ? path.slice(home.length) : path
+  const segments = relative === '' || relative === '/' ? [] : relative.replace(/^\//, '').split('/')
+  const targetFor = (index: number) =>
+    inHome ? home + '/' + segments.slice(0, index + 1).join('/') : '/' + segments.slice(0, index + 1).join('/')
+  const upTarget = parentOf(path)
+  const showUp = path !== home && !(upTarget === '/' && home !== '/')
   return (
     <nav aria-label="Location" className="flex items-center gap-0.5 px-3 py-1.5">
-      <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => onNavigate('/')}>
+      <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => onNavigate(home)}>
         <House className="size-4" aria-hidden />
         Home
       </Button>
       {segments.map((segment, index) => {
-        const target = '/' + segments.slice(0, index + 1).join('/')
+        const target = targetFor(index)
         return (
           <div key={target} className="flex items-center gap-0.5">
             <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
@@ -1470,13 +1501,13 @@ function Breadcrumb({ path, onNavigate }: { path: string; onNavigate: (p: string
           </div>
         )
       })}
-      {path !== '/' && (
+      {showUp && (
         <Button
           variant="ghost"
           size="icon"
           className="ml-1 size-8"
           aria-label="Up one level"
-          onClick={() => onNavigate(parentOf(path))}
+          onClick={() => onNavigate(upTarget)}
         >
           <ChevronUp />
         </Button>
@@ -1485,17 +1516,16 @@ function Breadcrumb({ path, onNavigate }: { path: string; onNavigate: (p: string
   )
 }
 
-/** EntryMenu wraps any element in the right-click menu for one entry. Items are
- *  shown only for the permissions the caller holds in this folder. */
 function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryActions; children: ReactNode }) {
   const p = actions.perms
+  const managed = isMembersTop(entry.path)
   const share = p.share
   const manage = actions.canManageAccess
   const copy = p.read
-  const cut = p.delete
+  const cut = p.delete && !managed
   const paste = actions.canPaste && p.write
-  const rename = p.write && p.delete
-  const remove = p.delete
+  const rename = p.write && p.delete && !managed
+  const remove = p.delete && !managed
   return (
     <ContextMenu>
       <ContextMenuTrigger
@@ -1774,7 +1804,7 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
               <Download />
             </Button>
           )}
-          {actions.perms.delete && (
+          {actions.perms.delete && !isMembersTop(entry.path) && (
             <Button
               variant="ghost"
               size="icon"

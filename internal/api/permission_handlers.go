@@ -8,8 +8,6 @@ import (
 	"github.com/krishna2206/zefile/internal/audit"
 )
 
-// permSet is the JSON shape of a permission bitmask: one boolean per bit, so a
-// client never has to know the numeric values.
 type permSet struct {
 	Read   bool `json:"read"`
 	Write  bool `json:"write"`
@@ -48,9 +46,6 @@ func (ps permSet) toPerm() acl.Perm {
 	return p
 }
 
-// handleEffectivePermissions reports what the caller can do at a path. Any
-// signed-in user may ask about their own permissions — it is how the interface
-// decides which actions to offer.
 func (s *Server) handleEffectivePermissions(w http.ResponseWriter, r *http.Request) {
 	p, ok := pathParam(w, r)
 	if !ok {
@@ -65,17 +60,19 @@ func (s *Server) handleEffectivePermissions(w http.ResponseWriter, r *http.Reque
 }
 
 type userSummary struct {
-	ID       int64  `json:"id"`
-	Username string `json:"username"`
-	IsAdmin  bool   `json:"is_admin"`
-	Disabled bool   `json:"disabled"`
+	ID         int64  `json:"id"`
+	Username   string `json:"username"`
+	IsAdmin    bool   `json:"is_admin"`
+	Disabled   bool   `json:"disabled"`
+	QuotaBytes int64  `json:"quota_bytes"`
+	UsedBytes  int64  `json:"used_bytes"`
 }
 
 type userListResponse struct {
 	Users []userSummary `json:"users"`
 }
 
-// handleListUsers lists accounts so an admin can pick who to grant access to.
+// handleListUsers lists accounts for the admin user picker.
 func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return
@@ -85,9 +82,18 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
+	var byUser map[int64]int64
+	if s.quota != nil {
+		if snap, err := s.quota.Snapshot(r.Context()); err == nil {
+			byUser = snap.ByUser
+		}
+	}
 	out := make([]userSummary, 0, len(users))
 	for _, u := range users {
-		out = append(out, userSummary{ID: u.ID, Username: u.Username, IsAdmin: u.IsAdmin, Disabled: u.Disabled})
+		out = append(out, userSummary{
+			ID: u.ID, Username: u.Username, IsAdmin: u.IsAdmin, Disabled: u.Disabled,
+			QuotaBytes: u.QuotaBytes, UsedBytes: byUser[u.ID],
+		})
 	}
 	writeJSON(w, r, http.StatusOK, userListResponse{Users: out})
 }
@@ -106,8 +112,7 @@ type accessListResponse struct {
 	Rules []accessRuleResponse `json:"rules"`
 }
 
-// handleListAccess returns the rules attached to one path, with subject names
-// resolved for display. Admin only: seeing who has access is management.
+// handleListAccess returns the rules attached to one path.
 func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return
@@ -123,7 +128,6 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve subject names in one pass rather than a query per rule.
 	userNames := map[int64]string{}
 	if users, err := s.auth.Users(r.Context()); err == nil {
 		for _, u := range users {
@@ -160,7 +164,6 @@ func (s *Server) handleListAccess(w http.ResponseWriter, r *http.Request) {
 }
 
 type grantAccessRequest struct {
-	// SubjectType is "user" (the default) or "group".
 	SubjectType string  `json:"subject_type"`
 	SubjectID   int64   `json:"subject_id"`
 	Path        string  `json:"path"`
@@ -169,8 +172,6 @@ type grantAccessRequest struct {
 	Deny        bool    `json:"deny"`
 }
 
-// handleGrantAccess creates or replaces a rule for a user or group at a path.
-// Admin only.
 func (s *Server) handleGrantAccess(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return
@@ -191,8 +192,6 @@ func (s *Server) handleGrantAccess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The subject must exist, so a rule is never granted to a user or group that
-	// is not there — which would look granted but resolve to nothing.
 	subjectType := acl.SubjectUser
 	switch body.SubjectType {
 	case "", "user":
@@ -239,7 +238,6 @@ func (s *Server) handleGrantAccess(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleRevokeAccess deletes a rule by id. Admin only.
 func (s *Server) handleRevokeAccess(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAdmin(w, r); !ok {
 		return

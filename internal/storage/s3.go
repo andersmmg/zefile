@@ -169,28 +169,23 @@ func (s *S3) Stat(ctx context.Context, p Path) (FileInfo, error) {
 		return FileInfo{Path: p, Name: p.Name(), IsDir: true}, nil
 	}
 
-	out, err := s.head(ctx, s.key(p))
+	file, dir, err := s.probePath(ctx, p)
 	if err != nil {
 		return FileInfo{}, err
 	}
-	if out != nil {
+	if file.found {
 		return FileInfo{
 			Path:    p,
 			Name:    p.Name(),
-			Size:    aws.ToInt64(out.ContentLength),
-			ModTime: timeOrZero(out.LastModified),
+			Size:    file.size,
+			ModTime: file.modTime,
 			IsDir:   false,
 		}, nil
 	}
-
-	exists, modTime, err := s.probeDir(ctx, s.dirPrefix(p))
-	if err != nil {
-		return FileInfo{}, err
-	}
-	if !exists {
+	if !dir.found {
 		return FileInfo{}, ErrNotExist
 	}
-	return FileInfo{Path: p, Name: p.Name(), ModTime: modTime, IsDir: true}, nil
+	return FileInfo{Path: p, Name: p.Name(), ModTime: dir.modTime, IsDir: true}, nil
 }
 
 // List implements [FS].
@@ -201,18 +196,14 @@ func (s *S3) List(ctx context.Context, p Path) ([]FileInfo, error) {
 	}
 
 	if !p.IsRoot() {
-		out, err := s.head(ctx, s.key(p))
+		file, dir, err := s.probePath(ctx, p)
 		if err != nil {
 			return nil, err
 		}
-		if out != nil {
+		if file.found {
 			return nil, ErrNotDir
 		}
-		exists, _, err := s.probeDir(ctx, s.dirPrefix(p))
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
+		if !dir.found {
 			return nil, ErrNotExist
 		}
 	}
@@ -441,17 +432,47 @@ func (s *S3) probeDir(ctx context.Context, dirKey string) (exists bool, modTime 
 	return true, time.Time{}, nil
 }
 
+type probedObject struct {
+	found   bool
+	size    int64
+	modTime time.Time
+}
+
+func (s *S3) probePath(ctx context.Context, p Path) (file, dir probedObject, err error) {
+	if p.IsRoot() {
+		return probedObject{}, probedObject{found: true}, nil
+	}
+	key, dirKey := s.key(p), s.dirPrefix(p)
+	out, err := s.client.ListObjectsV2(ctx, &awss3.ListObjectsV2Input{
+		Bucket:  aws.String(s.bucket),
+		Prefix:  aws.String(key),
+		MaxKeys: aws.Int32(1),
+	})
+	if err != nil {
+		return probedObject{}, probedObject{}, mapS3Err(err)
+	}
+	if len(out.Contents) == 0 {
+		return probedObject{}, probedObject{}, nil
+	}
+	obj := out.Contents[0]
+	switch k := aws.ToString(obj.Key); {
+	case k == key:
+		file = probedObject{found: true, size: aws.ToInt64(obj.Size), modTime: timeOrZero(obj.LastModified)}
+	case k == dirKey:
+		dir = probedObject{found: true, modTime: timeOrZero(obj.LastModified)}
+	case strings.HasPrefix(k, dirKey):
+		dir = probedObject{found: true}
+	}
+	return file, dir, nil
+}
+
 // exists reports whether anything already occupies a path.
 func (s *S3) exists(ctx context.Context, p Path) (bool, error) {
-	out, err := s.head(ctx, s.key(p))
+	file, dir, err := s.probePath(ctx, p)
 	if err != nil {
 		return false, err
 	}
-	if out != nil {
-		return true, nil
-	}
-	exists, _, err := s.probeDir(ctx, s.dirPrefix(p))
-	return exists, err
+	return file.found || dir.found, nil
 }
 
 // ensureDir requires p to be a directory.
@@ -459,18 +480,14 @@ func (s *S3) ensureDir(ctx context.Context, p Path) error {
 	if p.IsRoot() {
 		return nil
 	}
-	out, err := s.head(ctx, s.key(p))
+	file, dir, err := s.probePath(ctx, p)
 	if err != nil {
 		return err
 	}
-	if out != nil {
+	if file.found {
 		return ErrNotDir
 	}
-	exists, _, err := s.probeDir(ctx, s.dirPrefix(p))
-	if err != nil {
-		return err
-	}
-	if !exists {
+	if !dir.found {
 		return ErrNotExist
 	}
 	return nil

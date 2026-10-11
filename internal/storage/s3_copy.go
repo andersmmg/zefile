@@ -4,10 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 )
+
+const copyParallelism = 8
 
 // Server-side copies, moves and deletes. There is no rename in object
 // storage, so a move is a copy followed by a delete of the originals:
@@ -16,13 +20,11 @@ import (
 
 var _ TreeCopier = (*S3)(nil)
 
-// listedObject is one object under a prefix with its listed size.
 type listedObject struct {
 	key  string
 	size int64
 }
 
-// listAllObjects returns every object under a prefix, following pagination.
 func (s *S3) listAllObjects(ctx context.Context, prefix string) ([]listedObject, error) {
 	var out []listedObject
 	var token *string
@@ -162,26 +164,64 @@ func (s *S3) CopyTree(ctx context.Context, from, to Path, progress func(done, to
 		return s.putMarker(ctx, dstPrefix)
 	}
 
+	want := make(map[string]struct{}, len(objects))
+	for _, obj := range objects {
+		want[strings.TrimPrefix(obj.key, srcPrefix)] = struct{}{}
+	}
+	if err := s.copyObjects(ctx, objects, srcPrefix, dstPrefix, report); err != nil {
+		return err
+	}
+	return s.verifyTree(ctx, dstPrefix, want)
+}
+
+func (s *S3) copyObjects(ctx context.Context, objects []listedObject, srcPrefix, dstPrefix string, report func(done, total int64)) error {
 	var total int64
 	for _, obj := range objects {
 		total += obj.size
 	}
-	var copied int64
-	want := make(map[string]struct{}, len(objects))
-	for _, obj := range objects {
-		if err := ctx.Err(); err != nil {
-			return err
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	jobs := make(chan listedObject)
+	var done atomic.Int64
+	var once sync.Once
+	var firstErr atomic.Value // error
+	var mu sync.Mutex
+
+	worker := func() {
+		for obj := range jobs {
+			rel := strings.TrimPrefix(obj.key, srcPrefix)
+			if err := s.copyKeySized(ctx, obj.key, dstPrefix+rel, obj.size); err != nil {
+				once.Do(func() { firstErr.Store(err) })
+				cancel()
+				return
+			}
+			if report != nil {
+				mu.Lock()
+				report(done.Add(obj.size), total)
+				mu.Unlock()
+			}
 		}
-		rel := strings.TrimPrefix(obj.key, srcPrefix)
-		dstKey := dstPrefix + rel
-		if err := s.copyKey(ctx, obj.key, dstKey); err != nil {
-			return err
-		}
-		copied += obj.size
-		report(copied, total)
-		want[rel] = struct{}{}
 	}
-	return s.verifyTree(ctx, dstPrefix, want)
+
+	var wg sync.WaitGroup
+	for range copyParallelism {
+		wg.Add(1)
+		go func() { defer wg.Done(); worker() }()
+	}
+	for _, obj := range objects {
+		select {
+		case jobs <- obj:
+		case <-ctx.Done():
+		}
+	}
+	close(jobs)
+	wg.Wait()
+
+	if err, ok := firstErr.Load().(error); ok && err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 // verifyTree checks the destination holds exactly the copied set.
@@ -261,18 +301,14 @@ func (s *S3) Move(ctx context.Context, from, to Path) error {
 	if len(objects) == 0 {
 		return s.putMarker(ctx, dstPrefix)
 	}
-	var srcKeys []string
+	srcKeys := make([]string, 0, len(objects))
 	want := make(map[string]struct{}, len(objects))
 	for _, obj := range objects {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		rel := strings.TrimPrefix(obj.key, srcPrefix)
-		if err := s.copyKey(ctx, obj.key, dstPrefix+rel); err != nil {
-			return err
-		}
 		srcKeys = append(srcKeys, obj.key)
-		want[rel] = struct{}{}
+		want[strings.TrimPrefix(obj.key, srcPrefix)] = struct{}{}
+	}
+	if err := s.copyObjects(ctx, objects, srcPrefix, dstPrefix, nil); err != nil {
+		return err
 	}
 	if err := s.verifyTree(ctx, dstPrefix, want); err != nil {
 		return err

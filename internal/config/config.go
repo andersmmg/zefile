@@ -34,6 +34,7 @@ const (
 	// Backend and object-storage settings
 	EnvThumbMaxBytes     = "ZEFILE_THUMB_MAX_BYTES"
 	EnvPreviewMaxBytes   = "ZEFILE_PREVIEW_MAX_BYTES"
+	EnvQuotaBytes        = "ZEFILE_QUOTA_BYTES"
 	EnvStorageBackend    = "ZEFILE_STORAGE_BACKEND"
 	EnvS3Endpoint        = "ZEFILE_S3_ENDPOINT"
 	EnvS3Region          = "ZEFILE_S3_REGION"
@@ -120,6 +121,9 @@ type Config struct {
 
 	// ThumbMaxBytes caps the source file a thumbnail job will fetch.
 	ThumbMaxBytes int64
+
+	// QuotaBytes caps instance bytes. Zero means unlimited.
+	QuotaBytes int64
 }
 
 // SingleOrigin reports whether user content is served from the application
@@ -242,6 +246,16 @@ func Load() (Config, error) {
 			return Config{}, err
 		}
 		cfg.ThumbMaxBytes = n
+	}
+	if raw := strings.TrimSpace(os.Getenv(EnvQuotaBytes)); raw != "" {
+		n, err := parseBytes(EnvQuotaBytes, raw)
+		if err != nil {
+			return Config{}, err
+		}
+		if n < 0 {
+			return Config{}, fmt.Errorf("config: %s must not be negative", EnvQuotaBytes)
+		}
+		cfg.QuotaBytes = n
 	}
 
 	return cfg, nil

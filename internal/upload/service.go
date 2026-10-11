@@ -100,6 +100,8 @@ type Service struct {
 	direct   storage.DirectStager
 	partSize int64
 
+	quotaCheck func(ctx context.Context, userID, size int64) error
+
 	// Concurrent PATCHes against one session would interleave writes and
 	// produce a file that is the wrong length in an unpredictable way. tus
 	// forbids it; this makes the second request wait rather than trusting the
@@ -116,6 +118,11 @@ func WithClock(now func() time.Time) Option { return func(s *Service) { s.now = 
 
 // WithTTL sets how long an untouched session survives.
 func WithTTL(d time.Duration) Option { return func(s *Service) { s.ttl = d } }
+
+// WithQuotaCheck refuses uploads that would breach a storage limit.
+func WithQuotaCheck(fn func(ctx context.Context, userID, size int64) error) Option {
+	return func(s *Service) { s.quotaCheck = fn }
+}
 
 // WithDirect switches the service to direct mode. A non-positive partSize
 // falls back to the storage default.
@@ -153,6 +160,11 @@ func New(database *db.DB, fs Store, opts ...Option) *Service {
 func (s *Service) Create(ctx context.Context, userID int64, target storage.Path, size int64, checksum string) (Session, error) {
 	if size < 0 || size > MaxUploadSize {
 		return Session{}, ErrTooLarge
+	}
+	if s.quotaCheck != nil {
+		if err := s.quotaCheck(ctx, userID, size); err != nil {
+			return Session{}, err
+		}
 	}
 	if s.direct != nil {
 		return s.createDirect(ctx, userID, target, size, checksum)
@@ -324,6 +336,11 @@ func (s *Service) Complete(ctx context.Context, token string) (Session, error) {
 	if err != nil {
 		return Session{}, err
 	}
+	if s.quotaCheck != nil {
+		if err := s.quotaCheck(ctx, row.UserID, row.Size); err != nil {
+			return Session{}, err
+		}
+	}
 	if err := s.direct.CompleteUpload(ctx, handle, target); err != nil {
 		if errors.Is(err, storage.ErrNotExist) {
 			return Session{}, ErrNotFound
@@ -439,6 +456,11 @@ func (s *Service) finish(ctx context.Context, row sqlcgen.Upload, stage storage.
 	target, err := storage.ParsePath(row.TargetPath)
 	if err != nil {
 		return err
+	}
+	if s.quotaCheck != nil {
+		if err := s.quotaCheck(ctx, row.UserID, row.Size); err != nil {
+			return err
+		}
 	}
 	if err := s.fs.CommitStage(ctx, stage, target); err != nil {
 		return err

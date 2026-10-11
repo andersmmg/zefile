@@ -412,6 +412,38 @@ func TestCancelledRequestKeepsWhatArrived(t *testing.T) {
 	}
 }
 
+func TestQuotaCheckRefusesAtCreateAndPublish(t *testing.T) {
+	t.Parallel()
+
+	ctx := t.Context()
+	target := storage.MustParsePath("/quota.iso")
+	payload := []byte("twelve bytes")
+
+	refused := errors.New("quota exceeded")
+	h := newHarness(t, upload.WithQuotaCheck(func(context.Context, int64, int64) error {
+		return refused
+	}))
+	if _, err := h.svc.Create(ctx, 1, target, int64(len(payload)), ""); !errors.Is(err, refused) {
+		t.Fatalf("Create = %v, want the quota refusal", err)
+	}
+
+	calls := 0
+	h2 := newHarness(t, upload.WithQuotaCheck(func(context.Context, int64, int64) error {
+		calls++
+		if calls > 1 {
+			return refused
+		}
+		return nil
+	}))
+	session, err := h2.svc.Create(ctx, 1, target, int64(len(payload)), "")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := h2.svc.Write(ctx, session.Token, 0, bytes.NewReader(payload)); !errors.Is(err, refused) {
+		t.Fatalf("Write at publish = %v, want the quota refusal", err)
+	}
+}
+
 // cancellingReader cancels the context part way through, standing in for a
 // client whose connection drops.
 type cancellingReader struct {

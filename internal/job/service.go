@@ -241,6 +241,61 @@ func (s *Service) List(ctx context.Context, limit int64) ([]Job, error) {
 	return out, nil
 }
 
+// OwnerOf returns the user recorded in a job payload.
+func OwnerOf(payload string) int64 {
+	var p struct {
+		UserID int64 `json:"user_id"`
+	}
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		return 0
+	}
+	return p.UserID
+}
+
+func ownerOK(owner, userID int64, isAdmin bool) bool {
+	return isAdmin || (userID != 0 && owner != 0 && owner == userID)
+}
+
+const filterScanMax = 500
+
+// ListFor returns jobs the caller may see.
+func (s *Service) ListFor(ctx context.Context, userID int64, isAdmin bool, limit int64) ([]Job, error) {
+	scan := limit
+	if !isAdmin {
+		scan = min(filterScanMax, max(limit, limit*5))
+	}
+	rows, err := s.reads.ListRecentJobs(ctx, scan)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Job, 0, min(int(limit), len(rows)))
+	for _, r := range rows {
+		if int64(len(out)) >= limit {
+			break
+		}
+		if !ownerOK(OwnerOf(r.Payload), userID, isAdmin) {
+			continue
+		}
+		out = append(out, toJob(r))
+	}
+	return out, nil
+}
+
+// GetFor returns one job the caller may see.
+func (s *Service) GetFor(ctx context.Context, id, userID int64, isAdmin bool) (Job, error) {
+	row, err := s.reads.GetJob(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Job{}, ErrNotFound
+		}
+		return Job{}, err
+	}
+	if !ownerOK(OwnerOf(row.Payload), userID, isAdmin) {
+		return Job{}, ErrNotFound
+	}
+	return toJob(row), nil
+}
+
 // ErrNotFound means no job has the given id.
 var ErrNotFound = errors.New("job: no such job")
 
@@ -374,6 +429,30 @@ func (s *Service) Resume(ctx context.Context, id int64) error {
 	}
 	s.nudge()
 	return nil
+}
+
+// CancelFor stops a job the caller may see.
+func (s *Service) CancelFor(ctx context.Context, id, userID int64, isAdmin bool) error {
+	if _, err := s.GetFor(ctx, id, userID, isAdmin); err != nil {
+		return err
+	}
+	return s.Cancel(ctx, id)
+}
+
+// PauseFor pauses a job the caller may see.
+func (s *Service) PauseFor(ctx context.Context, id, userID int64, isAdmin bool) error {
+	if _, err := s.GetFor(ctx, id, userID, isAdmin); err != nil {
+		return err
+	}
+	return s.Pause(ctx, id)
+}
+
+// ResumeFor resumes a job the caller may see.
+func (s *Service) ResumeFor(ctx context.Context, id, userID int64, isAdmin bool) error {
+	if _, err := s.GetFor(ctx, id, userID, isAdmin); err != nil {
+		return err
+	}
+	return s.Resume(ctx, id)
 }
 
 // throttledReporter returns a progress callback that writes to the database at

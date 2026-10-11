@@ -41,9 +41,14 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Sorted here rather than left to the filesystem's order, which is
-	// arbitrary and differs between systems. Directories lead, then names,
-	// which is the ordering every file manager uses.
+	if p.IsRoot() {
+		if c, ok := callerFrom(r.Context()); ok && !c.user.IsAdmin {
+			writeProblem(w, r, http.StatusForbidden, CodePermissionDenied,
+				"No root", "Browse your home instead — the tree root is not visible to members.")
+			return
+		}
+	}
+
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].IsDir != entries[j].IsDir {
 			return entries[i].IsDir
@@ -85,9 +90,10 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !guardMembersTop(w, r, p) {
+		return
+	}
 
-	// MkdirAll rather than Mkdir: creating a nested path in one call is what
-	// clients want, and the alternative is a client loop that races itself.
 	if err := s.fs.MkdirAll(r.Context(), p); err != nil {
 		writeError(w, r, err)
 		return
@@ -119,15 +125,15 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !guardMembersTop(w, r, from, to) {
+		return
+	}
 
 	if err := s.fs.Move(r.Context(), from, to); err != nil {
 		writeError(w, r, err)
 		return
 	}
 
-	// Ownership and permission rules are keyed by path, so a rename has to carry
-	// them across or ownership is orphaned and a shared folder silently loses the
-	// rules that granted access to it.
 	if err := s.acl.MoveOwner(r.Context(), from, to); err != nil {
 		writeError(w, r, err)
 		return
@@ -158,12 +164,12 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !guardMembersTop(w, r, to) {
+		return
+	}
 
 	err := s.fs.Copy(r.Context(), from, to)
 
-	// A directory or a very large file cannot be copied inside a request. Rather
-	// than refuse, hand it to the background worker and answer with the job the
-	// interface can follow.
 	if errors.Is(err, storage.ErrIsDir) || errors.Is(err, storage.ErrTooLarge) {
 		s.enqueueCopy(w, r, from, to)
 		return
@@ -173,8 +179,6 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The copy is a new file, and whoever made it owns it — not whoever owned
-	// the original.
 	if c, found := callerFrom(r.Context()); found {
 		if err := s.acl.SetOwner(r.Context(), to, c.user.ID); err != nil {
 			writeError(w, r, err)
@@ -190,14 +194,10 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusCreated, toEntryResponse(info))
 }
 
-// copyJobResponse wraps the job so the interface can tell an accepted background
-// copy apart from a synchronous one, which returns the created entry instead.
 type copyJobResponse struct {
 	Job jobResponse `json:"job"`
 }
 
-// enqueueCopy records a background copy job and answers 202 with it. The caller
-// is recorded on the job so the worker copies with the same authority.
 func (s *Server) enqueueCopy(w http.ResponseWriter, r *http.Request, from, to storage.Path) {
 	c, found := callerFrom(r.Context())
 	if !found {
@@ -224,16 +224,10 @@ func (s *Server) enqueueCopy(w http.ResponseWriter, r *http.Request, from, to st
 
 type extractRequest struct {
 	Archive string `json:"archive"`
-	// Dest is where the new directory is created. Empty means beside the
-	// archive, which is what a "extract here" action wants.
-	Dest string `json:"dest"`
+	Dest    string `json:"dest"`
 }
 
-// handleExtract unpacks a ZIP archive into a new directory. Extraction always
-// runs as a background job — an archive may be large and its expansion larger —
-// so the response is the job to follow, never the finished tree. The worker
-// enforces every safety limit; this handler only checks the archive exists and
-// hands the work off with the caller's authority recorded on it.
+// handleExtract unpacks a ZIP archive as a background job.
 func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	c, ok := callerFrom(r.Context())
 	if !ok {
@@ -249,7 +243,6 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No staging area on object storage: refuse at enqueue.
 	if _, ok := s.fs.(storage.Extractor); !ok {
 		writeProblem(w, r, http.StatusNotImplemented, CodeNotSupported,
 			"Not supported", "Extraction is not supported for object storage.")
@@ -263,9 +256,10 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !guardMembersTop(w, r, dest) {
+		return
+	}
 
-	// Fail obvious mistakes now rather than after a poll: a missing archive, or
-	// one that is a directory, should answer immediately.
 	info, err := s.fs.Stat(r.Context(), archive)
 	if err != nil {
 		writeError(w, r, err)
@@ -296,17 +290,12 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 }
 
 type fetchRequest struct {
-	URL string `json:"url"`
-	// Dir is the folder the file lands in. Empty means the root.
-	Dir string `json:"dir"`
-	// Name overrides the filename; empty derives it from the URL.
+	URL  string `json:"url"`
+	Dir  string `json:"dir"`
 	Name string `json:"name"`
 }
 
-// handleFetch downloads a URL into storage from the server's own network. It
-// always runs as a background job — the file may be very large — so the
-// response is the job to follow. The scheme is checked here for an immediate
-// rejection; every network-level defence lives in the fetcher the worker runs.
+// handleFetch downloads a URL as a background job.
 func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 	c, ok := callerFrom(r.Context())
 	if !ok {
@@ -339,6 +328,9 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !guardMembersTop(w, r, dir) {
+		return
+	}
 
 	if s.jobs == nil {
 		writeProblem(w, r, http.StatusServiceUnavailable, CodeInternal,
@@ -359,11 +351,7 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusAccepted, copyJobResponse{Job: toJobResponse(j)})
 }
 
-// handleDelete moves an entry to the trash rather than erasing it.
-//
-// A directory and everything under it go together in a single rename, so the
-// `recursive` flag the API once required no longer means anything — trashing a
-// tree is atomic, and a client that still sends the flag is simply ignored.
+// handleDelete moves an entry to the trash.
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	p, ok := pathParam(w, r)
 	if !ok {
@@ -375,13 +363,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !guardMembersTop(w, r, p) {
+		return
+	}
 	if err := s.trash.Trash(r.Context(), c.user.ID, p); err != nil {
 		writeError(w, r, err)
 		return
 	}
 
-	// Ownership is keyed on the path, which the entry no longer occupies.
-	// Restoring re-establishes it at the destination.
 	if err := s.acl.ClearOwner(r.Context(), p); err != nil {
 		writeError(w, r, err)
 		return
@@ -395,11 +384,7 @@ type linkResponse struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
-// handleLink mints a short-lived download URL on the content origin.
-//
-// The caller's read permission is checked here, by opening the file through the
-// storage layer rather than by asking the ACL engine directly — that way the
-// answer cannot drift from what an actual download would do.
+// handleLink mints a short-lived download URL.
 func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {
 	p, ok := pathParam(w, r)
 	if !ok {
@@ -424,24 +409,18 @@ func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {
 
 	token := s.signer.Sign(p, c.user.ID)
 	writeJSON(w, r, http.StatusOK, linkResponse{
-		// The filename rides at the end of the path because that is what a
-		// download manager names the saved file from.
 		URL:       s.contentBase + "/d/" + token + "/" + url.PathEscape(p.Name()),
 		ExpiresAt: time.Now().Add(content.DefaultTTL).UTC(),
 	})
 }
 
-// maxBundlePaths bounds a single zip request. A larger selection should download
-// its containing folder instead, which is one path and walks the same tree.
 const maxBundlePaths = 1000
 
 type bundleRequest struct {
 	Paths []string `json:"paths"`
 }
 
-// handleBundleLink mints a short-lived link to a zip of several items or a
-// folder. The archive is streamed by the content origin; this only signs which
-// paths it may contain, for which account.
+// handleBundleLink mints a short-lived link to a zip of several items.
 func (s *Server) handleBundleLink(w http.ResponseWriter, r *http.Request) {
 	c, found := callerFrom(r.Context())
 	if !found {
@@ -469,9 +448,6 @@ func (s *Server) handleBundleLink(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		// Authorise read now so an unreadable selection fails fast with a clean
-		// status, rather than producing a zip with holes. Stat also confirms the
-		// path exists.
 		if _, err := s.fs.Stat(r.Context(), p); err != nil {
 			writeError(w, r, err)
 			return
@@ -486,8 +462,6 @@ func (s *Server) handleBundleLink(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// bundleName is the archive's filename: the single item's name when there is one,
-// otherwise a generic name.
 func bundleName(paths []storage.Path) string {
 	if len(paths) == 1 {
 		return paths[0].Name() + ".zip"
@@ -495,16 +469,12 @@ func bundleName(paths []storage.Path) string {
 	return "zefile.zip"
 }
 
-// Text previews are bounded by the server's previewMaxBytes.
-
 type textResponse struct {
 	Content   string `json:"content"`
 	Truncated bool   `json:"truncated"`
 }
 
-// handleText returns a file's content as text for the preview, same-origin and
-// size-capped. It reads through the storage layer, so it authorises like any
-// other read and never serves a reserved path.
+// handleText returns a file's content as text for the preview.
 func (s *Server) handleText(w http.ResponseWriter, r *http.Request) {
 	p, ok := pathParam(w, r)
 	if !ok {
@@ -527,8 +497,6 @@ func (s *Server) handleText(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Read one byte past the cap so a file exactly at the cap is not mislabelled
-	// truncated, and anything larger is.
 	max := int(s.previewMaxBytes)
 	buf, err := io.ReadAll(io.LimitReader(file, int64(max)+1))
 	if err != nil {
@@ -540,8 +508,6 @@ func (s *Server) handleText(w http.ResponseWriter, r *http.Request) {
 		buf = buf[:max]
 	}
 
-	// Invalid UTF-8 becomes U+FFFD in the JSON string rather than corrupting the
-	// response; the interface only asks for this on text-shaped extensions.
 	writeJSON(w, r, http.StatusOK, textResponse{Content: string(buf), Truncated: truncated})
 }
 
@@ -550,6 +516,12 @@ type spaceResponse struct {
 	Total     uint64 `json:"total"`
 	Reserve   uint64 `json:"reserve"`
 	ReadOnly  bool   `json:"read_only"`
+
+	Used  int64 `json:"used"`
+	Quota int64 `json:"quota"`
+
+	InstanceUsed  int64 `json:"instance_used"`
+	InstanceTotal int64 `json:"instance_total"`
 }
 
 func (s *Server) handleSpace(w http.ResponseWriter, r *http.Request) {
@@ -558,30 +530,43 @@ func (s *Server) handleSpace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, spaceResponse{
+	resp := spaceResponse{
 		Available: info.Available,
 		Total:     info.Total,
 		Reserve:   info.Reserve,
 		ReadOnly:  info.ReadOnly,
-	})
+	}
+	if s.quota != nil {
+		snap, err := s.quota.Snapshot(r.Context())
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		resp.InstanceUsed = snap.TotalBytes
+		resp.InstanceTotal = s.quota.ServerQuota()
+		if resp.InstanceTotal <= 0 {
+			resp.InstanceTotal = int64(info.Total)
+		}
+		if c, ok := callerFrom(r.Context()); ok {
+			resp.Used = snap.ByUser[c.user.ID]
+			if u, err := s.auth.GetUser(r.Context(), c.user.ID); err == nil {
+				resp.Quota = u.QuotaBytes
+			}
+		}
+	}
+	writeJSON(w, r, http.StatusOK, resp)
 }
 
 type configResponse struct {
-	// InlinePreview reports whether files are served inline, so the interface
-	// can render an image or PDF in place instead of only downloading it.
 	InlinePreview bool `json:"inline_preview"`
 
-	// Version is the running build, shown in the interface.
 	Version string `json:"version"`
 }
 
-// handleConfig reports the instance capabilities the interface has to adapt to.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, configResponse{InlinePreview: !s.singleOrigin, Version: s.version})
 }
 
-// pathParam reads and validates the path query parameter, defaulting to the
-// root so that listing the top of the tree needs no argument.
 func pathParam(w http.ResponseWriter, r *http.Request) (storage.Path, bool) {
 	raw := r.URL.Query().Get("path")
 	if raw == "" {

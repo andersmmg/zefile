@@ -26,7 +26,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, is_admin, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at
+RETURNING id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes
 `
 
 type CreateUserParams struct {
@@ -58,6 +58,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Disabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.QuotaBytes,
 	)
 	return i, err
 }
@@ -75,7 +76,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at FROM users WHERE id = ?
+SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -91,12 +92,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.Disabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.QuotaBytes,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at FROM users WHERE username = ? AND disabled = 0
+SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes FROM users WHERE username = ? AND disabled = 0
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -112,12 +114,13 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.Disabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.QuotaBytes,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at FROM users ORDER BY username
+SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes FROM users ORDER BY username
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
@@ -139,6 +142,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 			&i.Disabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.QuotaBytes,
 		); err != nil {
 			return nil, err
 		}
@@ -197,6 +201,22 @@ type SetUserDisabledParams struct {
 
 func (q *Queries) SetUserDisabled(ctx context.Context, arg SetUserDisabledParams) error {
 	_, err := q.db.ExecContext(ctx, setUserDisabled, arg.Disabled, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const setUserQuota = `-- name: SetUserQuota :exec
+UPDATE users SET quota_bytes = ?, updated_at = ? WHERE id = ?
+`
+
+type SetUserQuotaParams struct {
+	QuotaBytes int64
+	UpdatedAt  int64
+	ID         int64
+}
+
+// A per-account storage cap in bytes. Zero means unlimited.
+func (q *Queries) SetUserQuota(ctx context.Context, arg SetUserQuotaParams) error {
+	_, err := q.db.ExecContext(ctx, setUserQuota, arg.QuotaBytes, arg.UpdatedAt, arg.ID)
 	return err
 }
 
