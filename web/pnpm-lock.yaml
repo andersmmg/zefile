@@ -56,6 +56,9 @@ importers:
       react-dom:
         specifier: ^19.2.8
         version: 19.2.8(react@19.2.8)
+      smartcrop:
+        specifier: ^2.0.5
+        version: 2.0.5
       sonner:
         specifier: ^2.0.7
         version: 2.0.7(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -1181,6 +1184,9 @@ packages:
   set-blocking@2.0.0:
     resolution: {integrity: sha512-KiKBS8AnWGEyLzofFfmvKwpdPzqiy16LvQfK3yv/fVH7Bj13/wl3JSR1J+rfgRE9q7xUJK4qvgS8raSOeLUehw==}
 
+  smartcrop@2.0.5:
+    resolution: {integrity: sha512-aXoHTM8XlC51g96kgZkYxZ2mx09/ibOrIVLiUNOFozV/MHmFSgEr1/5CKVBoFD5vd+re2wSy0xra21CyjRITzA==}
+
   sonner@2.0.7:
     resolution: {integrity: sha512-W6ZN4p58k8aDKA4XPcx2hpIQXBRAgyiWVkYhT7CvK6D3iAu7xjvVyhQHg2/iaKJZ1XVJ4r7XuwGL+WGEK37i9w==}
     peerDependencies:
@@ -2171,6 +2177,8 @@ snapshots:
   scheduler@0.27.0: {}
 
   set-blocking@2.0.0: {}
+
+  smartcrop@2.0.5: {}
 
   sonner@2.0.7(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     dependencies:
