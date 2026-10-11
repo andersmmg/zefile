@@ -297,6 +297,9 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
 
   const fileInput = useRef<HTMLInputElement>(null)
   const dirInput = useRef<HTMLInputElement>(null)
+  // One controller per in-flight or queued upload, so the panel's cancel
+  // button stops the bytes now rather than letting the queue drain.
+  const uploadControllers = useRef(new Map<string, AbortController>())
   const pathRef = useRef(path)
   pathRef.current = path
 
@@ -464,7 +467,12 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const runUpload = useCallback(
     async (items: { file: File; name: string }[], target: string) => {
       if (items.length === 0) return
-      const queued = items.map(({ file, name }) => ({ id: crypto.randomUUID(), file, name }))
+      const queued = items.map(({ file, name }) => {
+        const id = crypto.randomUUID()
+        const controller = new AbortController()
+        uploadControllers.current.set(id, controller)
+        return { id, file, name, signal: controller.signal }
+      })
 
       // Show the whole batch at once, as a queue, so someone sees every file
       // they meant to send rather than only the one in flight.
@@ -491,16 +499,36 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         if (pathRef.current === target) void load(target, { silent: true })
       }
 
-      for (const { id, file, name } of queued) {
+      for (const { id, file, name, signal } of queued) {
         const update = (patch: Partial<UploadProgress>) =>
           setTransfers((current) => current.map((t) => (t.id === id ? { ...t, ...patch } : t)))
 
+        // A queued file cancelled before its turn never touches the network.
+        if (signal.aborted) {
+          update({ status: 'cancelled', speed: 0 })
+          uploadControllers.current.delete(id)
+          continue
+        }
         update({ status: 'uploading' })
         try {
-          await uploadFile(file, joinPath(target, name), (sent, speed) => update({ sent, speed }))
+          await uploadFile(
+            file,
+            joinPath(target, name),
+            (sent, speed) => update({ sent, speed }),
+            signal,
+          )
           update({ status: 'done', sent: file.size, speed: 0 })
         } catch (err) {
-          update({ status: 'error', error: err instanceof Error ? err.message : 'failed' })
+          // An abort is a decision, not a failure: it reads as cancelled,
+          // never as an error. The abandoned server session expires on its
+          // own, exactly as if the tab had closed mid-upload.
+          if (signal.aborted || (err instanceof DOMException && err.name === 'AbortError')) {
+            update({ status: 'cancelled', speed: 0 })
+          } else {
+            update({ status: 'error', error: err instanceof Error ? err.message : 'failed' })
+          }
+        } finally {
+          uploadControllers.current.delete(id)
         }
 
         refresh(false)
@@ -532,6 +560,37 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       await runUpload(items, target)
     },
     [path, runUpload],
+  )
+
+  // Queued rows flip to cancelled at once instead of waiting for their turn;
+  // the runUpload loop sees the aborted signal and skips them without any
+  // network traffic. In-flight rows flip when their abort lands a moment later.
+  const markQueuedCancelled = useCallback((ids: Set<string> | null) => {
+    setTransfers((current) =>
+      current.map((t) =>
+        t.status === 'queued' && (!ids || ids.has(t.id)) ? { ...t, status: 'cancelled' as const, speed: 0 } : t,
+      ),
+    )
+  }, [])
+
+  // cancelTransfers aborts every in-flight request; queued files cancel
+  // without any network traffic.
+  const cancelTransfers = useCallback(() => {
+    for (const controller of uploadControllers.current.values()) controller.abort()
+    uploadControllers.current.clear()
+    markQueuedCancelled(null)
+  }, [markQueuedCancelled])
+
+  // cancelTransfer stops one file: an in-flight request aborts on the spot,
+  // a queued one flips at once. The runUpload loop folds both into the
+  // 'cancelled' state.
+  const cancelTransfer = useCallback(
+    (id: string) => {
+      uploadControllers.current.get(id)?.abort()
+      uploadControllers.current.delete(id)
+      markQueuedCancelled(new Set([id]))
+    },
+    [markQueuedCancelled],
   )
 
   const upload = useCallback(
@@ -1305,7 +1364,12 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         )}
 
         <div className="fixed bottom-4 right-4 z-20 flex flex-col items-end gap-3">
-          <Transfers transfers={transfers} onClear={() => setTransfers([])} />
+          <Transfers
+            transfers={transfers}
+            onClear={() => setTransfers([])}
+            onCancel={cancelTransfers}
+            onCancelTransfer={cancelTransfer}
+          />
           <JobsPanel
             jobs={jobs}
             onClear={() => setJobs([])}
@@ -2382,7 +2446,17 @@ function JobsPanel({
  * Transfers is a persistent panel rather than a toast: an upload is a state,
  * not an event — it outlives navigation.
  */
-function Transfers({ transfers, onClear }: { transfers: UploadProgress[]; onClear: () => void }) {
+function Transfers({
+  transfers,
+  onClear,
+  onCancel,
+  onCancelTransfer,
+}: {
+  transfers: UploadProgress[]
+  onClear: () => void
+  onCancel: () => void
+  onCancelTransfer: (id: string) => void
+}) {
   if (transfers.length === 0) return null
   const remaining = transfers.filter((t) => t.status === 'uploading' || t.status === 'queued').length
   const busy = remaining > 0
@@ -2393,14 +2467,25 @@ function Transfers({ transfers, onClear }: { transfers: UploadProgress[]; onClea
         <p className="text-sm font-medium">
           {busy ? `Uploading — ${remaining} left` : 'Transfers'}
         </p>
-        {!busy && (
+        {busy ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto size-7"
+            aria-label="Cancel uploads"
+            title="Cancel uploads"
+            onClick={onCancel}
+          >
+            <X className="size-4" />
+          </Button>
+        ) : (
           <Button variant="ghost" size="sm" className="ml-auto" onClick={onClear}>
             Clear
           </Button>
         )}
       </div>
 
-      <div className="mt-2 max-h-64 space-y-2 overflow-auto">
+      <div className="mt-2 max-h-64 space-y-2 overflow-x-hidden overflow-y-auto">
         {transfers.map((transfer) => (
           <div key={transfer.id} className="space-y-1">
             <div className="flex items-center gap-4">
@@ -2422,8 +2507,22 @@ function Transfers({ transfers, onClear }: { transfers: UploadProgress[]; onClea
                     ? 'Waiting…'
                     : transfer.status === 'done'
                       ? 'Done'
-                      : `${formatSize(transfer.sent)} / ${formatSize(transfer.total)}`}
+                      : transfer.status === 'cancelled'
+                        ? 'Cancelled'
+                        : `${formatSize(transfer.sent)} / ${formatSize(transfer.total)}`}
               </span>
+              {(transfer.status === 'uploading' || transfer.status === 'queued') && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-6 shrink-0"
+                  aria-label={`Cancel ${transfer.name}`}
+                  title={`Cancel ${transfer.name}`}
+                  onClick={() => onCancelTransfer(transfer.id)}
+                >
+                  <X className="size-3.5" />
+                </Button>
+              )}
             </div>
             {transfer.status === 'uploading' && (
               <div className="flex items-center gap-2">
