@@ -17,8 +17,8 @@ import (
 )
 
 // Integration tests against a real S3-compatible server. They skip unless
-// ZEFILE_TEST_S3_ENDPOINT is set, so the ordinary suite stays self-contained
-// (PLAN.md §8). Locally the server is SeaweedFS:
+// ZEFILE_TEST_S3_ENDPOINT is set, so the ordinary suite stays self-contained.
+// Locally the server is SeaweedFS:
 //
 //	weed mini -dir=./weed_temp    (SeaweedFS quick-start; S3 on :8333,
 //	identity admin/secret, bucket my-bucket)

@@ -17,9 +17,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
-// B2 probe: answers the PLAN.md §9 verification items against a real
-// Backblaze B2 bucket. Skipped unless the B2 variables are set, so the
-// ordinary suite never needs credentials:
+// B2 probe: verifies provider behavior against a real Backblaze B2 bucket
+// (presigned-URL overrides, conditional writes, checksums, stored metadata,
+// delimiter listing, SDK compatibility). Skipped unless the B2 variables are
+// set, so the ordinary suite never needs credentials:
 //
 //	ZEFILE_TEST_B2_ENDPOINT=https://s3.us-west-004.backblazeb2.com \
 //	ZEFILE_TEST_B2_BUCKET=<bucket> \

@@ -83,6 +83,19 @@ Verify:
 bbb2 bucket get <bucketName>
 ```
 
+Aborted uploads leave multipart parts behind that you pay for. Set a lifecycle
+rule aborting incomplete multipart uploads (B2: bucket → Lifecycle Settings,
+7 days is sane).
+
+| Provider | Endpoint | Region |
+|---|---|---|
+| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | your bucket's region, e.g. `us-west-004` |
+| AWS S3 | unset (AWS default) | the bucket's region |
+| R2 / MinIO | your endpoint URL | as configured (`auto` on R2) |
+
+Cost note: downloads and previews stream straight from the bucket, so every
+view is bucket egress — there is no server-side cache to absorb repeat views.
+
 ## Backups
 
 Back up two things separately: your **data directory** (the files — use your
