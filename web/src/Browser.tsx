@@ -120,9 +120,9 @@ type GroupBy = 'none' | 'type' | 'date'
  *  Tailwind keeps it in the build. */
 type GridSize = { min: string; icon: string; label: string }
 const GRID_SIZES: GridSize[] = [
-  { min: '7rem', icon: 'size-8', label: 'Small' },
-  { min: '10rem', icon: 'size-12', label: 'Medium' },
-  { min: '14rem', icon: 'size-16', label: 'Large' },
+  { min: '7rem', icon: 'size-12', label: 'Small' },
+  { min: '10rem', icon: 'size-16', label: 'Medium' },
+  { min: '14rem', icon: 'size-20', label: 'Large' },
 ]
 
 const TYPE_ORDER = [
