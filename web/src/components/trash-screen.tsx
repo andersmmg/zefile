@@ -99,7 +99,7 @@ export function TrashScreen({ onChanged }: { onChanged: () => void }) {
             <CircleNotch className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
           </div>
         ) : items.length === 0 ? (
-          <Empty title="Trash is empty" detail="Deleted files land here, and can be put back until you empty it." />
+          <Empty title="Trash is empty" detail="Trashed files land here, and can be put back until you empty it." />
         ) : (
           <div>
             {items.map((item) => (

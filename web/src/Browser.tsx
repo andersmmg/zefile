@@ -2068,7 +2068,7 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
         {remove && (
           <ContextMenuItem variant="destructive" onSelect={() => actions.remove(entry)}>
             <TrashIcon />
-            Delete
+            Move to Trash
             <ContextMenuShortcut>Del</ContextMenuShortcut>
           </ContextMenuItem>
         )}
@@ -2322,7 +2322,7 @@ function ListRow({
               variant="ghost"
               size="icon"
               className="size-8 text-muted-foreground hover:text-destructive"
-              aria-label={`Delete ${entry.name}`}
+              aria-label={`Trash ${entry.name}`}
               onClick={(e) => {
                 e.stopPropagation()
                 actions.remove(entry)
@@ -2666,7 +2666,7 @@ function DeleteDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={onConfirm}>Move to trash</AlertDialogAction>
+          <AlertDialogAction onClick={onConfirm}>Move to Trash</AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
