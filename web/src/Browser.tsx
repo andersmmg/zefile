@@ -941,7 +941,10 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       }
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
       const key = e.key.toLowerCase()
-      if (key === 'c' && selected.length > 0) {
+      if (key === 'a') {
+        e.preventDefault()
+        selectBox(ordered.map((en) => en.path))
+      } else if (key === 'c' && selected.length > 0) {
         e.preventDefault()
         setClipboard({ mode: 'copy', entries: selected })
       } else if (key === 'x' && selected.length > 0) {
@@ -955,7 +958,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [screen, selected, clipboard, doPaste, dialog, preview, perms])
+  }, [screen, selected, clipboard, doPaste, dialog, preview, perms, ordered, selectBox])
 
   // Follow background copies: while any job is unfinished, poll each until it
   // settles, then refresh the listing on success or report the failure. The

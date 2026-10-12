@@ -105,9 +105,18 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground select-none;
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+  }
+  /* only text meant to be read or copied stays selectable */
+  input,
+  textarea,
+  [contenteditable],
+  pre,
+  code,
+  iframe {
+    @apply select-text;
   }
 }

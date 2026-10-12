@@ -10,6 +10,10 @@ import './index.css'
 // Applied before the first paint so the page never flashes the wrong theme.
 initTheme()
 
+document.addEventListener('contextmenu', (e) => {
+  if (!(e.target instanceof Element) || !e.target.closest('[data-allow-context]')) e.preventDefault()
+})
+
 const root = document.getElementById('root')
 if (!root) throw new Error('the page has no mount point')
 

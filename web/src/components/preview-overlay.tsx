@@ -127,6 +127,7 @@ export function PreviewOverlay({
             <img
               src={url}
               alt={entry.name}
+              data-allow-context
               className="max-h-[85vh] max-w-[90vw] rounded object-contain shadow-2xl"
               onError={() => setFailed(true)}
             />
