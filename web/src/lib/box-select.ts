@@ -1,12 +1,16 @@
 import { useCallback, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react'
 
-export const INTERACTIVE_SELECTOR = '[data-entry-path], button, a, input, textarea, select'
+// data-control marks a bare control outside any button
+export const INTERACTIVE_SELECTOR = '[data-entry-path], button, a, input, textarea, select, [data-control]'
 
 /** how far a press must travel before it becomes a box */
 const MIN_MOVE = 4
 
 /** minimum hold time for the box to stay */
 const SWALLOW_MS = 300
+
+/** fade-out time after release */
+export const FADE_MS = 150
 
 export type BoxRect = { left: number; top: number; width: number; height: number }
 
@@ -31,6 +35,7 @@ type Options = {
 
 export type BoxSelect = {
   rect: BoxRect | null
+  fading: boolean
   onMouseDown: (e: ReactMouseEvent) => void
   click: (then: () => void) => void
 }
@@ -48,16 +53,16 @@ function touched(container: HTMLElement, box: Box): string[] {
   return out
 }
 
-/**
- * wires box selection onto a listing container
- */
+/** wires box selection onto a container */
 export function useBoxSelect({ snapshot, apply }: Options): BoxSelect {
   const opts = useRef({ snapshot, apply })
   opts.current = { snapshot, apply }
 
   const [rect, setRect] = useState<BoxRect | null>(null)
+  const [fading, setFading] = useState(false)
   const drag = useRef<Drag | null>(null)
   const swallowUntil = useRef(0)
+  const fadeTimer = useRef(0)
 
   const paint = useCallback((d: Drag) => {
     const box: Box = {
@@ -66,7 +71,17 @@ export function useBoxSelect({ snapshot, apply }: Options): BoxSelect {
       right: Math.max(d.startX, d.x),
       bottom: Math.max(d.startY, d.y),
     }
-    setRect({ left: box.left, top: box.top, width: box.right - box.left, height: box.bottom - box.top })
+    // drawn clipped to the browse area so it never paints over the sidebar/header
+    const area = d.container.getBoundingClientRect()
+    const vis: Box = {
+      left: Math.max(box.left, area.left),
+      top: Math.max(box.top, area.top),
+      right: Math.min(box.right, area.right),
+      bottom: Math.min(box.bottom, area.bottom),
+    }
+    if (vis.left < vis.right && vis.top < vis.bottom)
+      setRect({ left: vis.left, top: vis.top, width: vis.right - vis.left, height: vis.bottom - vis.top })
+    else setRect(null)
     opts.current.apply([...d.base, ...touched(d.container, box)])
   }, [])
 
@@ -98,21 +113,37 @@ export function useBoxSelect({ snapshot, apply }: Options): BoxSelect {
     d.frame = 0
     drag.current = null
     if (!d.active) return
-    paint(d) // update the box
-    setRect(null)
+    paint(d)
+    // keep the last rect mounted and let it fade out rather than vanishing
+    setFading(true)
+    fadeTimer.current = window.setTimeout(() => {
+      setRect(null)
+      setFading(false)
+      fadeTimer.current = 0
+    }, FADE_MS)
     swallowUntil.current = Date.now() + SWALLOW_MS
   }, [move, paint])
 
   const onMouseDown = useCallback(
     (e: ReactMouseEvent) => {
       if (e.button !== 0) return
+      // a press during the fade cancels it
+      if (fadeTimer.current) {
+        window.clearTimeout(fadeTimer.current)
+        fadeTimer.current = 0
+        setRect(null)
+        setFading(false)
+      }
       const target = e.target instanceof Element ? e.target : null
       if (target?.closest(INTERACTIVE_SELECTOR)) return
       const container = e.currentTarget
       if (!(container instanceof HTMLElement)) return
-      // ignore scrollbar etc of browser
-      const area = container.getBoundingClientRect()
-      if (e.clientX - area.left >= container.clientWidth || e.clientY - area.top >= container.clientHeight) return
+      // scrollbars dispatch to the scroller itself, so test the gutter all the way up
+      for (let el: Element | null = target; el; el = el.parentElement) {
+        const r = el.getBoundingClientRect()
+        if (e.clientX - r.left >= el.clientWidth || e.clientY - r.top >= el.clientHeight) return
+        if (el === container) break
+      }
       e.preventDefault()
       drag.current = {
         startX: e.clientX,
@@ -139,5 +170,5 @@ export function useBoxSelect({ snapshot, apply }: Options): BoxSelect {
     then()
   }, [])
 
-  return { rect, onMouseDown, click }
+  return { rect, fading, onMouseDown, click }
 }

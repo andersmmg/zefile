@@ -1,110 +1,111 @@
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type DragEvent,
-  type MouseEvent,
-  type ReactNode,
-} from 'react'
-import { useVirtualizer } from '@tanstack/react-virtual'
-import { toast } from 'sonner'
-import {
-  ArrowDown,
-  ArrowUp,
-  CaretRight as ChevronRight,
-  CaretUp as ChevronUp,
-  ClipboardText,
-  Copy as CopyIcon,
-  DownloadSimple as Download,
-  Eye,
-  FileZip,
-  Fingerprint,
-  FolderOpen,
-  House,
-  Key,
-  Scissors,
-  SquaresFour as LayoutGrid,
-  List as ListIcon,
-  CircleNotch as Loader2,
-  LinkSimple,
-  PencilSimple as Pencil,
-  MagnifyingGlass as Search,
-  Pause,
-  Play,
-  ShareNetwork,
-  SlidersHorizontal,
-  Trash as Trash2,
-  X,
+    ArrowDownIcon,
+    ArrowUpIcon,
+    CaretRightIcon,
+    CaretUpIcon,
+    CircleNotchIcon,
+    ClipboardTextIcon,
+    CopyIcon,
+    DownloadIcon,
+    DownloadSimpleIcon,
+    EyeIcon,
+    FileZipIcon,
+    FingerprintIcon,
+    FolderOpenIcon,
+    HouseIcon,
+    KeyIcon,
+    LinkSimpleIcon,
+    ListIcon,
+    MagnifyingGlassIcon,
+    PauseIcon,
+    PencilSimpleIcon,
+    PlayIcon,
+    ScissorsIcon,
+    ShareNetworkIcon,
+    SlidersHorizontalIcon,
+    SquaresFourIcon,
+    TrashIcon,
+    XIcon
 } from '@phosphor-icons/react'
-
-import { Empty } from './App'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-  api,
-  ApiError,
-  formatSize,
-  joinPath,
-  parentOf,
-  type Entry,
-  type Job,
-  type PermSet,
-  type Space,
-  type User,
-} from './api'
-import { runPool, uploadFile, type UploadProgress } from './upload'
-import { categoryLabel, entryKind, formatRelativeTime, isImage, isMembersTop, isVideo } from '@/lib/files'
-import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
-import { INTERACTIVE_SELECTOR, useBoxSelect, type BoxRect } from '@/lib/box-select'
-import { Thumbnail } from '@/components/thumbnail'
+    useCallback,
+    useEffect,
+    useMemo,
+    useRef,
+    useState,
+    type DragEvent,
+    type MouseEvent,
+    type ReactNode,
+} from 'react'
+import { toast } from 'sonner'
+
+import { AccessDialog } from '@/components/access-dialog'
+import { ActivityScreen } from '@/components/activity-screen'
+import { Sidebar } from '@/components/app-sidebar'
+import { CreateContextItems, type CreateActions } from '@/components/create-menu'
+import { MembersScreen } from '@/components/members-screen'
 import { PreviewOverlay } from '@/components/preview-overlay'
+import { SettingsScreen } from '@/components/settings-screen'
+import { ShareDialog } from '@/components/share-dialog'
+import { SharesScreen } from '@/components/shares-screen'
+import { Thumbnail } from '@/components/thumbnail'
+import { TrashScreen } from '@/components/trash-screen'
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import {
+    ContextMenu,
+    ContextMenuContent,
+    ContextMenuItem,
+    ContextMenuSeparator,
+    ContextMenuShortcut,
+    ContextMenuTrigger,
+} from '@/components/ui/context-menu'
+import {
+    Dialog,
+    DialogContent,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from '@/components/ui/dialog'
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuLabel,
+    DropdownMenuRadioGroup,
+    DropdownMenuRadioItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
-import { Sidebar } from '@/components/app-sidebar'
-import { CreateContextItems, type CreateActions } from '@/components/create-menu'
-import { TrashScreen } from '@/components/trash-screen'
-import { SharesScreen } from '@/components/shares-screen'
-import { MembersScreen } from '@/components/members-screen'
-import { SettingsScreen } from '@/components/settings-screen'
-import { ActivityScreen } from '@/components/activity-screen'
-import { ShareDialog } from '@/components/share-dialog'
-import { AccessDialog } from '@/components/access-dialog'
+import { FADE_MS, INTERACTIVE_SELECTOR, useBoxSelect, type BoxRect } from '@/lib/box-select'
+import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
+import { categoryLabel, entryKind, formatRelativeTime, isImage, isMembersTop, isVideo } from '@/lib/files'
+import { Empty } from './App'
 import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuShortcut,
-  ContextMenuTrigger,
-} from '@/components/ui/context-menu'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
+    api,
+    ApiError,
+    formatSize,
+    joinPath,
+    parentOf,
+    type Entry,
+    type Job,
+    type PermSet,
+    type Space,
+    type User,
+} from './api'
+import { runPool, uploadFile, type UploadProgress } from './upload'
 
 /** rowHeight mirrors the list row height (h-12); headerHeight the group labels. */
 const rowHeight = 48
@@ -325,6 +326,9 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     setSelection(new Set(paths))
     setAnchor(paths.length > 0 ? paths[paths.length - 1]! : null)
   }, [])
+
+  // box select covers the whole browse area, breadcrumb bar included
+  const box = useBoxSelect({ snapshot: () => [...selection], apply: selectBox })
 
   // load fetches a folder's listing. A silent load refreshes the entries in
   // place without the loading spinner — used while uploading, where flashing the
@@ -1111,14 +1115,27 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
 
   // empty-area create menu depending on whether the caller can write here.
   const browseArea = (
-    <div className="min-h-0 flex-1">
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      onMouseDown={box.onMouseDown}
+      onClick={(e) => box.click(() => clearUnlessEntry(e, clearSelection))}
+    >
+      <Breadcrumb
+        path={path}
+        home={homePath}
+        onNavigate={(p) => {
+          setPath(p)
+          setQuery('')
+        }}
+        actions={actions}
+      />
       {loading && entries.length === 0 ? (
         <div className="grid h-full place-items-center">
-          <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+          <CircleNotchIcon className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
         </div>
       ) : inSearch && searchResults === null ? (
         <div className="grid h-full place-items-center">
-          <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+          <CircleNotchIcon className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
         </div>
       ) : ordered.length === 0 ? (
         <Empty
@@ -1126,10 +1143,11 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           detail={inSearch ? 'No file matches your search.' : 'Drop files or folders anywhere on this page to upload them.'}
         />
       ) : view === 'grid' ? (
-        <GridView groups={groups} actions={actions} onClearSelection={clearSelection} size={GRID_SIZES[gridSize]!} showLocation={inSearch} />
+        <GridView groups={groups} actions={actions} size={GRID_SIZES[gridSize]!} showLocation={inSearch} />
       ) : (
-        <ListView rows={listRows} sort={sort} onSort={toggleSort} actions={actions} onClearSelection={clearSelection} showLocation={inSearch} />
+        <ListView rows={listRows} sort={sort} onSort={toggleSort} actions={actions} showLocation={inSearch} />
       )}
+      {box.rect && <BoxOverlay rect={box.rect} fading={box.fading} />}
     </div>
   )
 
@@ -1215,7 +1233,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         {selected.length > 0 ? (
           <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-accent/40 px-4">
             <Button variant="ghost" size="icon" aria-label="Clear selection" onClick={clearSelection}>
-              <X />
+              <XIcon />
             </Button>
             <span className="text-sm font-medium">{selected.length} selected</span>
             <div className="ml-auto flex items-center gap-1">
@@ -1230,13 +1248,13 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                     else void downloadZip(selected)
                   }}
                 >
-                  <Download />
+                  <DownloadIcon />
                   Download
                 </Button>
               )}
               {onlyOne && perms.write && perms.delete && !isMembersTop(onlyOne.path) && (
                 <Button variant="ghost" size="sm" onClick={() => actions.rename(onlyOne)}>
-                  <Pencil />
+                  <PencilSimpleIcon />
                   Rename
                 </Button>
               )}
@@ -1262,7 +1280,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                     clearSelection()
                   }}
                 >
-                  <Scissors />
+                  <ScissorsIcon />
                   Move
                 </Button>
               )}
@@ -1273,7 +1291,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   className="text-destructive hover:text-destructive"
                   onClick={() => setDialog({ kind: 'delete', entries: selected })}
                 >
-                  <Trash2 />
+                  <TrashIcon />
                   Delete
                 </Button>
               )}
@@ -1283,9 +1301,9 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
             <div className="relative w-full max-w-md">
               {searching ? (
-                <Loader2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
+                <CircleNotchIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 animate-spin text-muted-foreground" />
               ) : (
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <MagnifyingGlassIcon className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               )}
               <Input
                 value={query}
@@ -1300,7 +1318,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   onClick={() => setQuery('')}
                   className="absolute right-2 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:text-foreground"
                 >
-                  <X className="size-4" />
+                  <XIcon className="size-4" />
                 </button>
               )}
             </div>
@@ -1313,7 +1331,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   title={`Paste ${clipboard.entries.length} item${clipboard.entries.length > 1 ? 's' : ''} here`}
                   className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-sm text-primary hover:bg-primary/15"
                 >
-                  <ClipboardText className="size-4" />
+                  <ClipboardTextIcon className="size-4" />
                   Paste ({clipboard.entries.length})
                 </button>
               )}
@@ -1331,16 +1349,6 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
             </div>
           </header>
         )}
-
-        <Breadcrumb
-          path={path}
-          home={homePath}
-          onNavigate={(p) => {
-            setPath(p)
-            setQuery('')
-          }}
-          actions={actions}
-        />
 
         {error && (
           <p role="alert" className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive">
@@ -1363,7 +1371,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                 <>
                   <ContextMenuSeparator />
                   <ContextMenuItem onSelect={() => void doPaste()}>
-                    <ClipboardText />
+                    <ClipboardTextIcon />
                     Paste ({clipboard.entries.length})
                     <ContextMenuShortcut>⌘V</ContextMenuShortcut>
                   </ContextMenuItem>
@@ -1560,24 +1568,25 @@ function intentOf(e: MouseEvent): ClickIntent {
   return 'replace'
 }
 
-/**
- * clearUnlessEntry clears the selection for clicks on empty space: anything
- * inside the listing that is not part of an entry tile/row and not an
- * interactive control (sort headers, buttons). The old target-is-container
- * check only caught clicks on the bare scroll container, so gaps between
- * tiles never deselected.
- */
+/** clearUnlessEntry clears the selection for clicks on empty browse-area space. */
 function clearUnlessEntry(e: MouseEvent, onClearSelection: () => void) {
   const el = e.target instanceof Element ? e.target : null
   if (el?.closest(INTERACTIVE_SELECTOR)) return
   onClearSelection()
 }
 
-function BoxOverlay({ rect }: { rect: BoxRect }) {
+function BoxOverlay({ rect, fading }: { rect: BoxRect; fading: boolean }) {
   return (
     <div
-      className="pointer-events-none fixed z-20 border border-primary bg-primary/15 rounded-lg"
-      style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}
+      className="pointer-events-none fixed z-20 rounded-lg border border-primary bg-primary/15"
+      style={{
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        opacity: fading ? 0 : 1,
+        transition: `opacity ${FADE_MS}ms`,
+      }}
     />
   )
 }
@@ -1637,7 +1646,7 @@ function moveDragProps(entry: Entry, actions: EntryActions, variant: 'tile' | 'r
 function ViewToggle({ view, onChange }: { view: View; onChange: (v: View) => void }) {
   const options: { value: View; label: string; icon: ReactNode }[] = [
     { value: 'list', label: 'List', icon: <ListIcon /> },
-    { value: 'grid', label: 'Icons', icon: <LayoutGrid /> },
+    { value: 'grid', label: 'Icons', icon: <SquaresFourIcon /> },
   ]
   return (
     <div className="flex items-center gap-1 rounded-md border p-0.5">
@@ -1681,7 +1690,7 @@ function DisplayOptions({
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2">
-          <SlidersHorizontal />
+          <SlidersHorizontalIcon />
           <span className="hidden sm:inline">Options</span>
         </Button>
       </DropdownMenuTrigger>
@@ -1768,7 +1777,15 @@ function Breadcrumb({
   const highlight = (target: string) =>
     actions.dropTarget === target ? 'bg-primary/15 ring-2 ring-primary' : ''
   return (
-    <nav aria-label="Location" className="flex items-center gap-0.5 px-3 py-1.5">
+    <nav
+      aria-label="Location"
+      className="inline-flex items-center gap-0.5 ml-3 mr-auto my-1.5"
+      onContextMenu={(e) => {
+        // exempt from the browse area's context menu
+        e.preventDefault()
+        e.stopPropagation()
+      }}
+    >
       <Button
         variant="ghost"
         size="sm"
@@ -1776,14 +1793,14 @@ function Breadcrumb({
         onClick={() => onNavigate(home)}
         {...(path === home ? {} : dropFor(home, 'Home'))}
       >
-        <House className="size-4" aria-hidden />
+        <HouseIcon className="size-4" aria-hidden />
         Home
       </Button>
       {segments.map((segment, index) => {
         const target = targetFor(index)
         return (
           <div key={target} className="flex items-center gap-0.5">
-            <ChevronRight className="size-4 text-muted-foreground" aria-hidden />
+            <CaretRightIcon className="size-4 text-muted-foreground" aria-hidden data-control />
             <Button
               variant="ghost"
               size="sm"
@@ -1804,7 +1821,7 @@ function Breadcrumb({
           aria-label="Up one level"
           onClick={() => onNavigate(upTarget)}
         >
-          <ChevronUp />
+          <CaretUpIcon />
         </Button>
       )}
     </nav>
@@ -1837,26 +1854,26 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
       <ContextMenuContent className="w-48">
         {entry.is_dir ? (
           <ContextMenuItem onSelect={() => actions.open(entry)}>
-            <FolderOpen />
+            <FolderOpenIcon />
             Open
           </ContextMenuItem>
         ) : (
           <>
             <ContextMenuItem onSelect={() => actions.open(entry)}>
-              <Eye />
+              <EyeIcon />
               Open
             </ContextMenuItem>
             <ContextMenuItem onSelect={() => actions.download(entry)}>
-              <Download />
+              <DownloadSimpleIcon />
               Download
             </ContextMenuItem>
             <ContextMenuItem onSelect={() => actions.checksum(entry)}>
-              <Fingerprint />
+              <FingerprintIcon />
               Copy SHA-256
             </ContextMenuItem>
             {entry.name.toLowerCase().endsWith('.zip') && p.write && (
               <ContextMenuItem onSelect={() => actions.extract(entry)}>
-                <FileZip />
+                <FileZipIcon />
                 Extract here
               </ContextMenuItem>
             )}
@@ -1864,7 +1881,7 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
         )}
         {entry.is_dir && p.read && (
           <ContextMenuItem onSelect={() => actions.downloadZip(entry)}>
-            <Download />
+            <DownloadSimpleIcon />
             Download (.zip)
           </ContextMenuItem>
         )}
@@ -1872,13 +1889,13 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
         {(share || manage) && <ContextMenuSeparator />}
         {share && (
           <ContextMenuItem onSelect={() => actions.share(entry)}>
-            <ShareNetwork />
+            <ShareNetworkIcon />
             Share…
           </ContextMenuItem>
         )}
         {manage && (
           <ContextMenuItem onSelect={() => actions.manageAccess(entry)}>
-            <Key />
+            <KeyIcon />
             Manage access…
           </ContextMenuItem>
         )}
@@ -1893,14 +1910,14 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
         )}
         {cut && (
           <ContextMenuItem onSelect={() => actions.cut(entry)}>
-            <Scissors />
+            <ScissorsIcon />
             Cut
             <ContextMenuShortcut>⌘X</ContextMenuShortcut>
           </ContextMenuItem>
         )}
         {paste && (
           <ContextMenuItem onSelect={() => actions.paste()}>
-            <ClipboardText />
+            <ClipboardTextIcon />
             Paste
             <ContextMenuShortcut>⌘V</ContextMenuShortcut>
           </ContextMenuItem>
@@ -1909,14 +1926,14 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
         {(rename || remove) && <ContextMenuSeparator />}
         {rename && (
           <ContextMenuItem onSelect={() => actions.rename(entry)}>
-            <Pencil />
+            <PencilSimpleIcon />
             Rename
             <ContextMenuShortcut>F2</ContextMenuShortcut>
           </ContextMenuItem>
         )}
         {remove && (
           <ContextMenuItem variant="destructive" onSelect={() => actions.remove(entry)}>
-            <Trash2 />
+            <TrashIcon />
             Delete
             <ContextMenuShortcut>Del</ContextMenuShortcut>
           </ContextMenuItem>
@@ -1931,7 +1948,6 @@ type ListProps = {
   sort: { key: SortKey; dir: SortDir }
   onSort: (key: SortKey) => void
   actions: EntryActions
-  onClearSelection: () => void
   // showLocation reveals each entry's folder under its name — used in search
   // results, which span folders.
   showLocation: boolean
@@ -1946,9 +1962,8 @@ function locationLabel(path: string): string {
   return parent === '/' ? 'Home' : parent.slice(1)
 }
 
-function ListView({ rows, sort, onSort, actions, onClearSelection, showLocation }: ListProps) {
+function ListView({ rows, sort, onSort, actions, showLocation }: ListProps) {
   const viewport = useRef<HTMLDivElement>(null)
-  const box = useBoxSelect({ snapshot: actions.selectedPaths, apply: actions.selectBox })
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -1962,12 +1977,7 @@ function ListView({ rows, sort, onSort, actions, onClearSelection, showLocation 
   })
 
   return (
-    <div
-      ref={viewport}
-      className="h-full overflow-auto"
-      onMouseDown={box.onMouseDown}
-      onClick={(e) => box.click(() => clearUnlessEntry(e, onClearSelection))}
-    >
+    <div ref={viewport} className="min-h-0 flex-1 overflow-auto">
       <div className={`${listGrid} sticky top-0 z-10 border-b bg-background px-4 py-2 text-xs font-medium text-muted-foreground`}>
         <span />
         <SortHeader label="Name" active={sort.key === 'name'} dir={sort.dir} onClick={() => onSort('name')} />
@@ -1998,7 +2008,6 @@ function ListView({ rows, sort, onSort, actions, onClearSelection, showLocation 
           )
         })}
       </div>
-      {box.rect && <BoxOverlay rect={box.rect} />}
     </div>
   )
 }
@@ -2025,7 +2034,7 @@ function SortHeader({
       } ${active ? 'text-foreground' : ''}`}
     >
       {label}
-      {active && (dir === 'asc' ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />)}
+      {active && (dir === 'asc' ? <ArrowUpIcon className="size-3" /> : <ArrowDownIcon className="size-3" />)}
     </button>
   )
 }
@@ -2072,7 +2081,7 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
           <span className="flex min-w-0 items-center gap-1.5">
             <span className="truncate text-sm">{entry.name}</span>
             {shared && (
-              <LinkSimple className="size-3.5 shrink-0 text-muted-foreground" aria-label="Shared" />
+              <LinkSimpleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Shared" />
             )}
           </span>
           {showLocation && (
@@ -2102,7 +2111,7 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
                 actions.download(entry)
               }}
             >
-              <Download />
+              <DownloadSimpleIcon />
             </Button>
           )}
           {actions.perms.delete && !isMembersTop(entry.path) && (
@@ -2116,7 +2125,7 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
                 actions.remove(entry)
               }}
             >
-              <Trash2 />
+              <TrashIcon />
             </Button>
           )}
         </div>
@@ -2132,23 +2141,16 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
 function GridView({
   groups,
   actions,
-  onClearSelection,
   size,
   showLocation,
 }: {
   groups: Group[]
   actions: EntryActions
-  onClearSelection: () => void
   size: GridSize
   showLocation: boolean
 }) {
-  const box = useBoxSelect({ snapshot: actions.selectedPaths, apply: actions.selectBox })
   return (
-    <div
-      className="h-full overflow-auto p-4"
-      onMouseDown={box.onMouseDown}
-      onClick={(e) => box.click(() => clearUnlessEntry(e, onClearSelection))}
-    >
+    <div className="min-h-0 flex-1 overflow-auto p-4">
       {groups.map((g) => (
         <section key={g.key} className="mb-4">
           {g.label && (
@@ -2167,7 +2169,6 @@ function GridView({
           </div>
         </section>
       ))}
-      {box.rect && <BoxOverlay rect={box.rect} />}
     </div>
   )
 }
@@ -2217,12 +2218,12 @@ function GridTile({ entry, actions, size, showLocation }: { entry: Entry; action
               className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-background/85 text-primary shadow-sm backdrop-blur-sm"
               title="Shared"
             >
-              <LinkSimple className="size-3.5" />
+              <LinkSimpleIcon className="size-3.5" />
             </span>
           )}
         </div>
         <div className="min-w-0 px-1">
-          <p className="line-clamp-2 break-words text-sm">{entry.name}</p>
+          <p className="line-clamp-2 wrap-break-word text-sm">{entry.name}</p>
           {showLocation ? (
             <p className="truncate text-xs text-muted-foreground" title={locationLabel(entry.path)}>
               {locationLabel(entry.path)}
@@ -2264,7 +2265,7 @@ function NameDialog({
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  async function submit(event: React.FormEvent) {
+  async function submit(event: React.SubmitEvent) {
     event.preventDefault()
     const name = value.trim()
     if (!name) {
@@ -2322,7 +2323,7 @@ function NameDialog({
                   title="Paste from clipboard"
                   onClick={() => void pasteFromClipboard()}
                 >
-                  <ClipboardText />
+                  <ClipboardTextIcon />
                 </Button>
               )}
             </div>
@@ -2454,7 +2455,7 @@ function JobsPanel({
                     title={paused ? 'Resume' : 'Pause'}
                     onClick={() => (paused ? onResume(job.id) : onPause(job.id))}
                   >
-                    {paused ? <Play className="size-3.5" /> : <Pause className="size-3.5" />}
+                    {paused ? <PlayIcon className="size-3.5" /> : <PauseIcon className="size-3.5" />}
                   </Button>
                 )}
                 {(inFlight || paused) && (
@@ -2465,7 +2466,7 @@ function JobsPanel({
                     title="Cancel"
                     onClick={() => onCancel(job.id)}
                   >
-                    <X className="size-3.5" />
+                    <XIcon className="size-3.5" />
                   </Button>
                 )}
               </div>
@@ -2518,7 +2519,7 @@ function Transfers({
             title="Cancel uploads"
             onClick={onCancel}
           >
-            <X className="size-4" />
+            <XIcon className="size-4" />
           </Button>
         ) : (
           <Button variant="ghost" size="sm" className="ml-auto" onClick={onClear}>
@@ -2562,7 +2563,7 @@ function Transfers({
                   title={`Cancel ${transfer.name}`}
                   onClick={() => onCancelTransfer(transfer.id)}
                 >
-                  <X className="size-3.5" />
+                  <XIcon className="size-3.5" />
                 </Button>
               )}
             </div>
