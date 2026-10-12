@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/krishna2206/zefile/internal/audit"
+	"github.com/krishna2206/zefile/internal/color"
 	"github.com/krishna2206/zefile/internal/content"
 	"github.com/krishna2206/zefile/internal/job"
 	"github.com/krishna2206/zefile/internal/storage"
@@ -22,6 +23,39 @@ type entryResponse struct {
 	ModTime time.Time `json:"mod_time"`
 	IsDir   bool      `json:"is_dir"`
 	Symlink bool      `json:"symlink,omitempty"`
+	Color   string    `json:"color,omitempty"`
+}
+
+func (s *Server) attachColors(r *http.Request, entries []entryResponse, dir string) {
+	if s.colors == nil || len(entries) == 0 {
+		return
+	}
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		return
+	}
+
+	var (
+		found map[string]string
+		err   error
+	)
+	if dir != "" {
+		found, err = s.colors.ForDirectory(r.Context(), c.user.ID, dir)
+	} else {
+		paths := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			paths = append(paths, entry.Path)
+		}
+		found, err = s.colors.ForPaths(r.Context(), c.user.ID, paths)
+	}
+	if err != nil {
+		return
+	}
+	for i := range entries {
+		if id := found[entries[i].Path]; id != "" {
+			entries[i].Color = id
+		}
+	}
 }
 
 type listResponse struct {
@@ -60,6 +94,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	for _, entry := range entries {
 		out = append(out, toEntryResponse(entry))
 	}
+	s.attachColors(r, out, p.String())
 	writeJSON(w, r, http.StatusOK, listResponse{Path: p.String(), Entries: out})
 }
 
@@ -74,7 +109,54 @@ func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, r, err)
 		return
 	}
-	writeJSON(w, r, http.StatusOK, toEntryResponse(info))
+	out := toEntryResponse(info)
+	s.attachColors(r, []entryResponse{out}, p.Parent().String())
+	writeJSON(w, r, http.StatusOK, out)
+}
+
+type colorRequest struct {
+	Path  string `json:"path"`
+	Color string `json:"color"`
+}
+
+func (s *Server) handleSetColor(w http.ResponseWriter, r *http.Request) {
+	var body colorRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	p, ok := parsePath(w, r, body.Path)
+	if !ok {
+		return
+	}
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
+	if s.colors == nil {
+		writeProblem(w, r, http.StatusNotImplemented, CodeBadRequest,
+			"Colours unavailable", "This server does not store entry colours.")
+		return
+	}
+	if body.Color != "" && !color.Valid(body.Color) {
+		writeProblem(w, r, http.StatusBadRequest, CodeBadRequest,
+			"Unknown colour", "Choose one of the colours the interface offers.")
+		return
+	}
+
+	var err error
+	if body.Color == "" {
+		err = s.colors.Clear(r.Context(), c.user.ID, p.String())
+	} else {
+		err = s.colors.Set(r.Context(), c.user.ID, p.String(), p.Parent().String(), body.Color)
+	}
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, struct {
+		Color string `json:"color"`
+	}{Color: body.Color})
 }
 
 type pathRequest struct {
@@ -141,6 +223,12 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	if err := s.acl.MoveRules(r.Context(), from, to); err != nil {
 		writeError(w, r, err)
 		return
+	}
+	if s.colors != nil {
+		if err := s.colors.Relocate(r.Context(), from.String(), to.String()); err != nil {
+			writeError(w, r, err)
+			return
+		}
 	}
 
 	info, err := s.fs.Stat(r.Context(), to)
@@ -374,6 +462,13 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if err := s.acl.ClearOwner(r.Context(), p); err != nil {
 		writeError(w, r, err)
 		return
+	}
+	// clear non existing file colors
+	if s.colors != nil {
+		if err := s.colors.Forget(r.Context(), p.String()); err != nil {
+			writeError(w, r, err)
+			return
+		}
 	}
 	s.audit(r, audit.ActionFileTrashed, p.String(), nil)
 	writeJSON(w, r, http.StatusNoContent, nil)

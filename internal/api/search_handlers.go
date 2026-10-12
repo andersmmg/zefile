@@ -102,5 +102,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return results[i].Name < results[j].Name
 	})
 
+	s.attachColors(r, results, "")
 	writeJSON(w, r, http.StatusOK, searchResponse{Query: query, Results: results, Truncated: truncated})
 }

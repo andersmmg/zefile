@@ -1,12 +1,12 @@
-import { CaretDown, FileArrowUp, FolderPlus, FolderSimplePlus, LinkSimple, Plus, PlusCircleIcon, PlusSquareIcon } from '@phosphor-icons/react'
+import { CaretDown, FileArrowUp, FolderPlus, FolderSimplePlus, LinkSimple, PlusCircleIcon } from '@phosphor-icons/react'
 
 import { Button } from '@/components/ui/button'
 import { ContextMenuItem } from '@/components/ui/context-menu'
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
 /** CreateActions are the three ways to add content to the current folder. The

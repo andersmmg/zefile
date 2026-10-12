@@ -23,6 +23,7 @@ import (
 	"github.com/krishna2206/zefile/internal/audit"
 	"github.com/krishna2206/zefile/internal/auth"
 	"github.com/krishna2206/zefile/internal/checksum"
+	"github.com/krishna2206/zefile/internal/color"
 	"github.com/krishna2206/zefile/internal/config"
 	"github.com/krishna2206/zefile/internal/content"
 	"github.com/krishna2206/zefile/internal/db"
@@ -224,6 +225,7 @@ func run() error {
 	auditLog := audit.New(database)
 	checksums := checksum.New(database, fs)
 	settingsSvc := settings.New(database)
+	colors := color.New(database)
 
 	// Offline IP-to-place lookup for the sessions screen. The published image
 	// ships a database at the second path; a from-source run without one falls
@@ -286,6 +288,7 @@ func run() error {
 		ObjectStorage:   cfg.Backend == config.BackendS3,
 		Thumbs:          thumbs,
 		Quota:           quotas,
+		Colors:          colors,
 	}).Handler()
 
 	contentHandler := content.New(content.Options{

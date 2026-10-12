@@ -1,42 +1,45 @@
 import {
-    ArrowDownIcon,
-    ArrowUpIcon,
-    CaretRightIcon,
-    CaretUpIcon,
-    CircleNotchIcon,
-    ClipboardTextIcon,
-    CopyIcon,
-    DownloadIcon,
-    DownloadSimpleIcon,
-    EyeIcon,
-    FileZipIcon,
-    FingerprintIcon,
-    FolderOpenIcon,
-    HouseIcon,
-    KeyIcon,
-    LinkSimpleIcon,
-    ListIcon,
-    MagnifyingGlassIcon,
-    PauseIcon,
-    PencilSimpleIcon,
-    PlayIcon,
-    ScissorsIcon,
-    ShareNetworkIcon,
-    SlidersHorizontalIcon,
-    SquaresFourIcon,
-    TrashIcon,
-    XIcon
+  ArrowDownIcon,
+  ArrowUpIcon,
+  CaretRightIcon,
+  CaretUpIcon,
+  CheckIcon,
+  CircleNotchIcon,
+  ClipboardTextIcon,
+  CopyIcon,
+  DownloadIcon,
+  DownloadSimpleIcon,
+  EyeIcon,
+  FileZipIcon,
+  FingerprintIcon,
+  FolderOpenIcon,
+  HouseIcon,
+  KeyIcon,
+  LinkSimpleIcon,
+  ListIcon,
+  MagnifyingGlassIcon,
+  PaletteIcon,
+  PauseIcon,
+  PencilSimpleIcon,
+  PlayIcon,
+  ProhibitIcon,
+  ScissorsIcon,
+  ShareNetworkIcon,
+  SlidersHorizontalIcon,
+  SquaresFourIcon,
+  TrashIcon,
+  XIcon
 } from '@phosphor-icons/react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import {
-    useCallback,
-    useEffect,
-    useMemo,
-    useRef,
-    useState,
-    type DragEvent,
-    type MouseEvent,
-    type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type MouseEvent,
+  type ReactNode,
 } from 'react'
 import { toast } from 'sonner'
 
@@ -52,58 +55,69 @@ import { SharesScreen } from '@/components/shares-screen'
 import { Thumbnail } from '@/components/thumbnail'
 import { TrashScreen } from '@/components/trash-screen'
 import {
-    AlertDialog,
-    AlertDialogAction,
-    AlertDialogCancel,
-    AlertDialogContent,
-    AlertDialogDescription,
-    AlertDialogFooter,
-    AlertDialogHeader,
-    AlertDialogTitle,
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import {
-    ContextMenu,
-    ContextMenuContent,
-    ContextMenuItem,
-    ContextMenuSeparator,
-    ContextMenuShortcut,
-    ContextMenuTrigger,
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuShortcut,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
 } from '@/components/ui/context-menu'
 import {
-    Dialog,
-    DialogContent,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from '@/components/ui/dialog'
 import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuLabel,
-    DropdownMenuRadioGroup,
-    DropdownMenuRadioItem,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { FADE_MS, INTERACTIVE_SELECTOR, useBoxSelect, type BoxRect } from '@/lib/box-select'
+import {
+  colorHex,
+  colorLabel,
+  COLORS,
+  frameClasses,
+  panelClasses,
+  type ColorId
+} from '@/lib/colors'
 import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
 import { categoryLabel, entryKind, formatRelativeTime, isImage, isMembersTop, isVideo } from '@/lib/files'
 import { Empty } from './App'
 import {
-    api,
-    ApiError,
-    formatSize,
-    joinPath,
-    parentOf,
-    type Entry,
-    type Job,
-    type PermSet,
-    type Space,
-    type User,
+  api,
+  ApiError,
+  formatSize,
+  joinPath,
+  parentOf,
+  type Entry,
+  type Job,
+  type PermSet,
+  type Space,
+  type User,
 } from './api'
 import { runPool, uploadFile, type UploadProgress } from './upload'
 
@@ -196,6 +210,7 @@ type EntryActions = {
   rename: (entry: Entry) => void
   remove: (entry: Entry) => void
   contextTarget: (entry: Entry) => void
+  setColor: (entry: Entry, color: ColorId | null) => void
   isSelected: (entry: Entry) => boolean
   selectBox: (paths: string[]) => void
   selectedPaths: () => string[]
@@ -828,6 +843,26 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     remove: (entry) => setDialog({ kind: 'delete', entries: [entry] }),
     contextTarget: (entry) => {
       if (!selection.has(entry.path)) selectEntry(entry, 'replace')
+    },
+    setColor: (entry, color) => {
+      const targets = clipboardTargets(entry)
+      const previous = targets.map((e) => ({ path: e.path, color: e.color }))
+      const paint = (c: string | undefined) =>
+        setEntries((cur) =>
+          cur.map((e) => (targets.some((t) => t.path === e.path) ? { ...e, color: c } : e)),
+        )
+      paint(color ?? undefined)
+      void Promise.all(targets.map((t) => api.setColor(t.path, color)))
+        .then(() => void load(pathRef.current, { silent: true }))
+        .catch((err) => {
+          setEntries((cur) =>
+            cur.map((e) => {
+              const was = previous.find((p) => p.path === e.path)
+              return was ? { ...e, color: was.color } : e
+            }),
+          )
+          toast.error(err instanceof ApiError ? err.message : 'Could not set that colour.')
+        })
     },
     isSelected: (entry) => selection.has(entry.path),
     selectBox,
@@ -1976,6 +2011,52 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
           </ContextMenuItem>
         )}
 
+        <ContextMenuSeparator />
+        <ContextMenuSub>
+          <ContextMenuSubTrigger className="gap-2 [&_svg:not([class*='size-'])]:size-4">
+            <PaletteIcon />
+            Color
+            {entry.color && (
+              <span className="grid size-4 shrink-0 place-items-center">
+                <span
+                  className="size-2.5 rounded-full ring-1 ring-border"
+                  style={{ background: colorHex(entry.color) }}
+                  aria-hidden
+                />
+              </span>
+            )}
+          </ContextMenuSubTrigger>
+          <ContextMenuSubContent className="w-44">
+            {Object.entries(COLORS).map(([id, c]) => (
+              <ContextMenuItem
+                key={id}
+                role="menuitemradio"
+                aria-checked={entry.color === id}
+                onSelect={() => actions.setColor(entry, id)}
+              >
+                <span className="grid size-4 shrink-0 place-items-center">
+                  <span
+                    className="size-2.5 rounded-full ring-1 ring-border"
+                    style={{ background: c.hex }}
+                    aria-hidden
+                  />
+                </span>
+                {c.label}
+                {entry.color === id && <CheckIcon className="ml-auto" />}
+              </ContextMenuItem>
+            ))}
+            <ContextMenuItem
+              role="menuitemradio"
+              aria-checked={!entry.color}
+              onSelect={() => actions.setColor(entry, null)}
+            >
+              <ProhibitIcon />
+              No colour
+              {!entry.color && <CheckIcon className="ml-auto" />}
+            </ContextMenuItem>
+          </ContextMenuSubContent>
+        </ContextMenuSub>
+
         {(rename || remove) && <ContextMenuSeparator />}
         {rename && (
           <ContextMenuItem onSelect={() => actions.rename(entry)}>
@@ -2146,6 +2227,8 @@ function ListRow({
   onFocus: () => void
 }) {
   const { icon: Icon, color } = entryKind(entry)
+  const tint = panelClasses(entry.color)
+  const swatch = colorHex(entry.color)
   const selected = actions.isSelected(entry)
   const shared = actions.isShared(entry)
   const { isTarget, ...drag } = moveDragProps(entry, actions, 'row')
@@ -2176,8 +2259,14 @@ function ListRow({
         }}
       >
         {isImage(entry) || isVideo(entry) ? (
-          <Thumbnail entry={entry} size={64} className="grid size-6 place-items-center overflow-hidden rounded bg-muted">
-            <Icon className={`size-5 ${color}`} />
+          <Thumbnail
+            entry={entry}
+            size={64}
+            className={`grid size-6 place-items-center overflow-hidden rounded ${
+              tint ?? 'bg-muted'
+            }`}
+          >
+            <Icon className={tint ? 'size-5' : `size-5 ${color}`} />
           </Thumbnail>
         ) : (
           <Icon className={`size-5 ${color}`} />
@@ -2185,6 +2274,14 @@ function ListRow({
 
         <span className="flex min-w-0 flex-col justify-center">
           <span className="flex min-w-0 items-center gap-1.5">
+            {swatch && (
+              <span
+                className="size-2 shrink-0 rounded-full ring-1 ring-border"
+                style={{ background: swatch }}
+                title={colorLabel(entry.color)}
+                aria-label={colorLabel(entry.color)}
+              />
+            )}
             <span className="truncate text-sm">{entry.name}</span>
             {shared && (
               <LinkSimpleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Shared" />
@@ -2355,6 +2452,8 @@ function GridTile({
   onFocus: () => void
 }) {
   const { icon: Icon, color } = entryKind(entry)
+  const tint = panelClasses(entry.color)
+  const frameTint = frameClasses(entry.color)
   const selected = actions.isSelected(entry)
   const shared = actions.isShared(entry)
   const { isTarget, ...drag } = moveDragProps(entry, actions)
@@ -2386,12 +2485,20 @@ function GridTile({
       >
         <div className="relative">
           {isImage(entry) || isVideo(entry) ? (
-            <Thumbnail entry={entry} className="grid aspect-square w-full place-items-center overflow-hidden rounded-md bg-muted/60">
+            <Thumbnail
+              entry={entry}
+              className={`grid aspect-square w-full place-items-center overflow-hidden rounded-md bg-muted/60 ${frameTint ?? ''
+                }`}
+            >
               <Icon className={`${size.icon} ${color}`} />
             </Thumbnail>
           ) : (
-            <div className="grid aspect-square w-full place-items-center rounded-md bg-muted/60">
-              <Icon className={`${size.icon} ${color}`} />
+            <div
+              className={`grid aspect-square w-full place-items-center rounded-md ${
+                tint ?? 'bg-muted/60'
+              }`}
+            >
+              <Icon className={tint ? size.icon : `${size.icon} ${color}`} />
             </div>
           )}
           {shared && (

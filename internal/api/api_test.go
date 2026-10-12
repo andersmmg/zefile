@@ -28,6 +28,7 @@ import (
 	"github.com/krishna2206/zefile/internal/audit"
 	"github.com/krishna2206/zefile/internal/auth"
 	"github.com/krishna2206/zefile/internal/checksum"
+	entrycolor "github.com/krishna2206/zefile/internal/color"
 	"github.com/krishna2206/zefile/internal/db"
 	"github.com/krishna2206/zefile/internal/job"
 	"github.com/krishna2206/zefile/internal/quota"
@@ -135,6 +136,7 @@ func newClient(t *testing.T) *client {
 		Audit:         audit.New(database),
 		ContentBase:   "https://content.example",
 		SecureCookies: false,
+		Colors:        entrycolor.New(database),
 	}).Handler())
 	t.Cleanup(srv.Close)
 
@@ -227,6 +229,7 @@ type entry struct {
 	Name  string `json:"name"`
 	Size  int64  `json:"size"`
 	IsDir bool   `json:"is_dir"`
+	Color string `json:"color,omitempty"`
 }
 
 type listing struct {

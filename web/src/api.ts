@@ -12,6 +12,7 @@ export type Entry = {
   mod_time: string
   is_dir: boolean
   symlink?: boolean
+  color?: string
 }
 
 export type Listing = { path: string; entries: Entry[] }
@@ -291,6 +292,12 @@ export const api = {
     ),
 
   space: () => request<Space>('/api/v1/fs/space'),
+
+  setColor: (path: string, color: string | null) =>
+    request<{ color: string }>('/api/v1/fs/color', {
+      method: 'PUT',
+      body: JSON.stringify({ path, color: color ?? '' }),
+    }),
 
   mkdir: (path: string) =>
     request<Entry>('/api/v1/fs/dirs', { method: 'POST', body: JSON.stringify({ path }) }),

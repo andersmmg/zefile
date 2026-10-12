@@ -51,6 +51,13 @@ type Checksum struct {
 	ComputedAt int64
 }
 
+type EntryColor struct {
+	Path   string
+	Parent string
+	UserID int64
+	Color  string
+}
+
 type FileCache struct {
 	Path     string
 	Parent   string

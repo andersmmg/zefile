@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, type CSSProperties, type ReactNode } from 'react'
 import smartcrop from 'smartcrop'
 
 import type { Entry } from '@/api'
@@ -9,11 +9,13 @@ export function Thumbnail({
   entry,
   className,
   size = 256,
+  style,
   children,
 }: {
   entry: Entry
   className?: string
   size?: number
+  style?: CSSProperties
   children: ReactNode
 }) {
   const [loadedSrc, setLoadedSrc] = useState<string | null>(null)
@@ -45,7 +47,7 @@ export function Thumbnail({
   // The image stays mounted with opacity so lazy loading still fetches it;
   // display:none would prevent onLoad from ever firing.
   return (
-    <div className={`relative overflow-hidden ${className ?? ''}`}>
+    <div className={`relative overflow-hidden ${className ?? ''}`} style={style}>
       {!shown && <div className="absolute inset-0 grid place-items-center">{children}</div>}
       {!failed && (
         <img
@@ -57,7 +59,7 @@ export function Thumbnail({
           onLoad={(e) => void locateSubject(e.currentTarget)}
           onError={() => setFailedSrc(src)}
           style={{ objectPosition: position }}
-          className={`absolute inset-0 h-full w-full object-cover transition-opacity ${
+          className={`inset-0 h-full w-full object-cover transition-opacity ${
             shown ? 'opacity-100' : 'opacity-0'
           }`}
         />

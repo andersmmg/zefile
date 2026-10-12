@@ -39,6 +39,9 @@ type Querier interface {
 	// Retention purge: drop entries older than a cutoff. The audit log records IP
 	// addresses, so keeping it bounded is a privacy measure, not only housekeeping.
 	DeleteAuditEntriesBefore(ctx context.Context, at int64) (int64, error)
+	DeleteEntryColor(ctx context.Context, arg DeleteEntryColorParams) (int64, error)
+	// Prefix comparison rather than LIKE, so names holding % or _ need no escaping.
+	DeleteEntryColorsSubtree(ctx context.Context, path string) error
 	DeleteExpiredSessions(ctx context.Context, expiresAt int64) error
 	DeleteFileMetaChildren(ctx context.Context, parent string) error
 	// Drops a path and everything beneath it, using a prefix comparison rather
@@ -67,6 +70,8 @@ type Querier interface {
 	// expires_at means the token never expires.
 	GetAPITokenByHash(ctx context.Context, arg GetAPITokenByHashParams) (GetAPITokenByHashRow, error)
 	GetChecksum(ctx context.Context, path string) (Checksum, error)
+	// One query for results spanning many folders.
+	GetEntryColorsForPaths(ctx context.Context, arg GetEntryColorsForPathsParams) ([]GetEntryColorsForPathsRow, error)
 	GetFileMeta(ctx context.Context, path string) (FileCache, error)
 	GetFileOwner(ctx context.Context, path string) (FileOwner, error)
 	// Batched so that listing a directory costs one query rather than one per entry.
@@ -105,6 +110,7 @@ type Querier interface {
 	// for the first page. The actor's name is joined in; it is null when the account
 	// was since deleted, which the entry still records by id and ip.
 	ListAuditEntries(ctx context.Context, arg ListAuditEntriesParams) ([]ListAuditEntriesRow, error)
+	ListEntryColors(ctx context.Context, arg ListEntryColorsParams) ([]ListEntryColorsRow, error)
 	ListExpiredUploads(ctx context.Context, expiresAt int64) ([]Upload, error)
 	ListFileMetaChildren(ctx context.Context, parent string) ([]FileCache, error)
 	// The whole ownership map, so usage can be attributed in one pass over a
@@ -139,6 +145,9 @@ type Querier interface {
 	// stranded on a name that no longer exists. The substr comparison avoids LIKE,
 	// whose wildcards a path containing '%' or '_' would trip.
 	MoveACLSubtree(ctx context.Context, arg MoveACLSubtreeParams) error
+	// A renamed subtree keeps its colours, and the stored parent is rewritten with
+	// it so the directory lookup stays correct underneath!
+	MoveEntryColorsSubtree(ctx context.Context, arg MoveEntryColorsSubtreeParams) error
 	// Follows a rename across a whole subtree in one statement. Only rows at or
 	// beneath the source move; the moved directory's own parent is untouched.
 	MoveFileMetaSubtree(ctx context.Context, arg MoveFileMetaSubtreeParams) error
@@ -165,6 +174,7 @@ type Querier interface {
 	// an id.
 	RevokeSessionForUser(ctx context.Context, arg RevokeSessionForUserParams) (int64, error)
 	RevokeShare(ctx context.Context, arg RevokeShareParams) (int64, error)
+	SetEntryColor(ctx context.Context, arg SetEntryColorParams) error
 	SetFileOwner(ctx context.Context, arg SetFileOwnerParams) error
 	SetMetaSync(ctx context.Context, arg SetMetaSyncParams) error
 	// Sets or clears (NULL) the TOTP secret. A non-NULL secret means two-factor
