@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -29,6 +30,8 @@ func TestEligible(t *testing.T) {
 	}{
 		{"photo.jpg", 100, KindImage, true},
 		{"clip.MP4", 100, KindVideo, true},
+		{"paper.pdf", 100, KindPDF, true},
+		{"paper.PDF", 100, KindPDF, true},
 		{"notes.txt", 100, 0, false},
 		{"archive.zip", 100, 0, false},
 		{"photo.jpg", 0, 0, false},
@@ -212,6 +215,95 @@ func TestFailedSourceCoolsDown(t *testing.T) {
 }
 
 var errFakeFFmpeg = errors.New("ffmpeg exploded")
+
+// basic pdf for testing
+func onePagePDF() []byte {
+	objects := []string{
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 4 0 R >>",
+		"<< /Length 31 >>\nstream\n1 0 0 rg 20 20 160 60 re f\nendstream",
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString("%PDF-1.4\n")
+	offsets := make([]int, len(objects))
+	for i, body := range objects {
+		offsets[i] = buf.Len()
+		fmt.Fprintf(&buf, "%d 0 obj\n%s\nendobj\n", i+1, body)
+	}
+
+	xref := buf.Len()
+	fmt.Fprintf(&buf, "xref\n0 %d\n", len(objects)+1)
+	buf.WriteString("0000000000 65535 f \n")
+	for _, off := range offsets {
+		fmt.Fprintf(&buf, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&buf, "trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n",
+		len(objects)+1, xref)
+	return buf.Bytes()
+}
+
+func seedFile(t *testing.T, fs *storage.Local, path string, data []byte) {
+	t.Helper()
+	f, err := fs.Create(context.Background(), storage.MustParsePath(path))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
+func TestPDFFirstPageIsRendered(t *testing.T) {
+	ctx := context.Background()
+	fs := testFS(t)
+	jobs := &recordingJobs{}
+	svc := New(fs, fs, jobs, 512<<20, nil)
+	seedFile(t, fs, "/paper.pdf", onePagePDF())
+	p := storage.MustParsePath("/paper.pdf")
+
+	if _, hit, err := svc.Get(ctx, p, 1, false); err != nil || hit {
+		t.Fatalf("Get = hit %v, err %v; want a miss", hit, err)
+	}
+	if n := jobs.count(); n != 1 {
+		t.Fatalf("enqueued %d jobs, want 1", n)
+	}
+	if err := svc.Generate(ctx, jobs.payloads[0]); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	thumb, hit, err := svc.Get(ctx, p, 1, false)
+	if err != nil || !hit {
+		t.Fatalf("Get after generate = hit %v, err %v", hit, err)
+	}
+	img, err := jpeg.Decode(bytes.NewReader(thumb))
+	if err != nil {
+		t.Fatalf("stored bytes are not a JPEG: %v", err)
+	}
+	// A 200x100 page fits the 256 box on its long side.
+	if b := img.Bounds(); b.Dx() != maxSide || b.Dy() != maxSide/2 {
+		t.Fatalf("thumbnail is %dx%d, want %dx%d", b.Dx(), b.Dy(), maxSide, maxSide/2)
+	}
+}
+
+func TestBrokenPDFFails(t *testing.T) {
+	ctx := context.Background()
+	fs := testFS(t)
+	jobs := &recordingJobs{}
+	svc := New(fs, fs, jobs, 512<<20, nil)
+	seedFile(t, fs, "/broken.pdf", []byte("%PDF-1.4\nnot really a pdf"))
+
+	if _, _, err := svc.Get(ctx, storage.MustParsePath("/broken.pdf"), 1, false); err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if err := svc.Generate(ctx, jobs.payloads[0]); err == nil {
+		t.Fatal("Generate on a corrupt PDF succeeded, want an error")
+	}
+}
 
 func TestRealFFmpegGrowsVideoThumb(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {

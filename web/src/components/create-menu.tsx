@@ -1,4 +1,4 @@
-import { CaretDown, FileArrowUp, FolderPlus, FolderSimplePlus, LinkSimple, PlusCircleIcon } from '@phosphor-icons/react'
+import { CaretDownIcon, FileArrowUpIcon, FolderPlusIcon, FolderSimplePlusIcon, LinkSimpleIcon, PlusCircleIcon } from '@phosphor-icons/react'
 
 import { Button } from '@/components/ui/button'
 import { ContextMenuItem } from '@/components/ui/context-menu'
@@ -20,10 +20,10 @@ export type CreateActions = {
 }
 
 const items = (a: CreateActions) => [
-  { key: 'folder', Icon: FolderPlus, label: 'New folder', run: a.newFolder },
-  { key: 'files', Icon: FileArrowUp, label: 'Import files', run: a.importFiles },
-  { key: 'import-folder', Icon: FolderSimplePlus, label: 'Import folder', run: a.importFolder },
-  { key: 'fetch-url', Icon: LinkSimple, label: 'Download from URL', run: a.fetchUrl },
+  { key: 'folder', Icon: FolderPlusIcon, label: 'New folder', run: a.newFolder },
+  { key: 'files', Icon: FileArrowUpIcon, label: 'Import files', run: a.importFiles },
+  { key: 'import-folder', Icon: FolderSimplePlusIcon, label: 'Import folder', run: a.importFolder },
+  { key: 'fetch-url', Icon: LinkSimpleIcon, label: 'Download from URL', run: a.fetchUrl },
 ]
 
 /** NewButton is the sidebar's primary action: a dropdown that gathers creating a
@@ -35,7 +35,7 @@ export function NewButton({ actions, disabled }: { actions: CreateActions; disab
         <Button className="justify-start gap-2" disabled={disabled}>
           <PlusCircleIcon />
           New
-          <CaretDown className="ml-auto size-4 opacity-70" />
+          <CaretDownIcon className="ml-auto size-4 opacity-70" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-52">

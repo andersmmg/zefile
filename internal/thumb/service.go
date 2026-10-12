@@ -47,6 +47,7 @@ type Kind int
 const (
 	KindImage Kind = iota
 	KindVideo
+	KindPDF
 )
 
 var imageExts = map[string]bool{
@@ -56,6 +57,10 @@ var imageExts = map[string]bool{
 var videoExts = map[string]bool{
 	"mp4": true, "webm": true, "mov": true, "m4v": true, "ogv": true,
 	"mkv": true, "avi": true,
+}
+
+var pdfExts = map[string]bool{
+	"pdf": true,
 }
 
 // Eligible reports whether name and size qualify for a generated thumbnail.
@@ -73,6 +78,8 @@ func Eligible(name string, size, maxBytes int64) (Kind, bool) {
 		return KindImage, true
 	case videoExts[ext]:
 		return KindVideo, true
+	case pdfExts[ext]:
+		return KindPDF, true
 	}
 	return 0, false
 }
@@ -98,6 +105,7 @@ type Service struct {
 	jobs     Enqueuer
 	maxBytes int64
 	runVideo func(ctx context.Context, src, dst string) error
+	runPDF   func(ctx context.Context, src, dst string) error
 
 	mu       sync.Mutex
 	inflight map[string]bool
@@ -112,7 +120,7 @@ func New(fs storage.FS, store storage.ThumbStore, jobs Enqueuer, maxBytes int64,
 	}
 	return &Service{
 		fs: fs, store: store, jobs: jobs, maxBytes: maxBytes,
-		runVideo: runVideo,
+		runVideo: runVideo, runPDF: runPDFium,
 		inflight: make(map[string]bool), failed: make(map[string]time.Time),
 	}
 }
@@ -243,16 +251,18 @@ func (s *Service) Generate(ctx context.Context, payload job.ThumbPayload) error 
 
 	out := tmpName + ".jpg"
 	defer func() { _ = os.Remove(out) }()
-	if kind == KindVideo {
-		if err := s.runVideo(ctx, tmpName, out); err != nil {
-			s.noteFailed(payload.Key)
-			return err
-		}
-	} else {
-		if err := makeImageThumb(tmpName, out); err != nil {
-			s.noteFailed(payload.Key)
-			return err
-		}
+	var render error
+	switch kind {
+	case KindVideo:
+		render = s.runVideo(ctx, tmpName, out)
+	case KindPDF:
+		render = s.runPDF(ctx, tmpName, out)
+	default:
+		render = makeImageThumb(tmpName, out)
+	}
+	if render != nil {
+		s.noteFailed(payload.Key)
+		return render
 	}
 	thumb, err := os.ReadFile(out)
 	if err != nil {

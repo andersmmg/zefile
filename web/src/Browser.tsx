@@ -105,7 +105,7 @@ import {
   type ColorId
 } from '@/lib/colors'
 import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
-import { categoryLabel, entryKind, formatRelativeTime, isImage, isMembersTop, isVideo } from '@/lib/files'
+import { canThumb, categoryLabel, entryKind, formatRelativeTime, isMembersTop } from '@/lib/files'
 import { Empty } from './App'
 import {
   api,
@@ -2258,7 +2258,7 @@ function ListRow({
           }
         }}
       >
-        {isImage(entry) || isVideo(entry) ? (
+        {canThumb(entry) ? (
           <Thumbnail
             entry={entry}
             size={64}
@@ -2484,7 +2484,7 @@ function GridTile({
         }}
       >
         <div className="relative">
-          {isImage(entry) || isVideo(entry) ? (
+          {canThumb(entry) ? (
             <Thumbnail
               entry={entry}
               className={`grid aspect-square w-full place-items-center overflow-hidden rounded-md bg-muted/60 ${frameTint ?? ''
@@ -2511,7 +2511,7 @@ function GridTile({
           )}
         </div>
         <div className="min-w-0 px-1">
-          <p className="line-clamp-2 wrap-break-word text-sm">{entry.name}</p>
+          <p className="line-clamp-2 wrap-break-word text-sm">{isMembersTop(entry.path) ? "Members" : entry.name}</p>
           {showLocation ? (
             <p className="truncate text-xs text-muted-foreground" title={locationLabel(entry.path)}>
               {locationLabel(entry.path)}

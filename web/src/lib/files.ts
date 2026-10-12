@@ -116,6 +116,11 @@ export function isPdf(entry: Entry): boolean {
   return !entry.is_dir && entry.name.toLowerCase().endsWith('.pdf')
 }
 
+/** reports whether the file type could have a thumbnail */
+export function canThumb(entry: Entry): boolean {
+  return isImage(entry) || isVideo(entry) || isPdf(entry)
+}
+
 /** extensionOf returns an entry's lower-case extension, or '' when it has none. */
 function extensionOf(entry: Entry): string {
   if (entry.is_dir) return ''
