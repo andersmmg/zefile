@@ -286,6 +286,13 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [selection, setSelection] = useState<Set<string>>(() => new Set())
   const [anchor, setAnchor] = useState<string | null>(null)
+  // focus separate from selection
+  const [focusPath, setFocusPath] = useState<string | null>(null)
+  const [focusSeq, setFocusSeq] = useState(0)
+  const focusEntry = useCallback((p: string | null) => {
+    setFocusPath(p)
+    setFocusSeq((n) => n + 1)
+  }, [])
   const [screen, setScreen] = useState<Screen>(() => initialLocation.screen)
   const [preview, setPreview] = useState<Entry | null>(null)
   const [inlinePreview, setInlinePreview] = useState(false)
@@ -320,7 +327,14 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const clearSelection = useCallback(() => {
     setSelection(new Set())
     setAnchor(null)
+    setFocusPath(null)
   }, [])
+
+  useEffect(() => {
+    if (focusPath) return
+    const el = document.activeElement
+    if (el instanceof HTMLElement && el.closest('[data-entry-path]')) el.blur()
+  }, [focusPath])
 
   const selectBox = useCallback((paths: string[]) => {
     setSelection(new Set(paths))
@@ -374,6 +388,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     void load(path)
     clearSelection()
     setPreview(null)
+    setFocusPath(null)
   }, [path, load, clearSelection])
 
   const firstLocation = useRef(true)
@@ -920,8 +935,15 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
       if (dialog || preview) return
-      if (e.key === 'Escape' && clipboard) {
-        setClipboard(null)
+      if (e.key === 'Escape') {
+        if (clipboard) setClipboard(null)
+        else if (selected.length > 0) clearSelection()
+        return
+      }
+      if (e.altKey && e.key === 'ArrowUp') {
+        e.preventDefault()
+        setPath(parentOf(path))
+        setQuery('')
         return
       }
       if (e.key === 'F2' && selected.length === 1) {
@@ -937,6 +959,17 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           e.preventDefault()
           setDialog({ kind: 'delete', entries: selected })
         }
+        return
+      }
+      // with no entry focused, default focus on first item
+      const isArrow = e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight'
+      if (isArrow || e.key === 'Tab') {
+        if (e.target instanceof Element && e.target.closest('[data-entry-path]')) return
+        // keep noramal tab key usage
+        if (e.key === 'Tab' && e.target instanceof Element && e.target.closest('button, a, [role="button"]')) return
+        if (ordered.length === 0) return
+        e.preventDefault()
+        focusEntry(ordered[0]!.path)
         return
       }
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
@@ -958,7 +991,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [screen, selected, clipboard, doPaste, dialog, preview, perms, ordered, selectBox])
+  }, [screen, selected, clipboard, doPaste, dialog, preview, perms, ordered, selectBox, path, clearSelection, focusEntry])
 
   // Follow background copies: while any job is unfinished, poll each until it
   // settles, then refresh the listing on success or report the failure. The
@@ -1146,9 +1179,26 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           detail={inSearch ? 'No file matches your search.' : 'Drop files or folders anywhere on this page to upload them.'}
         />
       ) : view === 'grid' ? (
-        <GridView groups={groups} actions={actions} size={GRID_SIZES[gridSize]!} showLocation={inSearch} />
+        <GridView
+          groups={groups}
+          actions={actions}
+          size={GRID_SIZES[gridSize]!}
+          showLocation={inSearch}
+          focusPath={focusPath}
+          focusSeq={focusSeq}
+          focusEntry={focusEntry}
+        />
       ) : (
-        <ListView rows={listRows} sort={sort} onSort={toggleSort} actions={actions} showLocation={inSearch} />
+        <ListView
+          rows={listRows}
+          sort={sort}
+          onSort={toggleSort}
+          actions={actions}
+          showLocation={inSearch}
+          focusPath={focusPath}
+          focusSeq={focusSeq}
+          focusEntry={focusEntry}
+        />
       )}
       {box.rect && <BoxOverlay rect={box.rect} fading={box.fading} />}
     </div>
@@ -1954,6 +2004,9 @@ type ListProps = {
   // showLocation reveals each entry's folder under its name — used in search
   // results, which span folders.
   showLocation: boolean
+  focusPath: string | null
+  focusSeq: number
+  focusEntry: (path: string | null) => void
 }
 
 // One grid template shared by the column header and every row so they line up.
@@ -1965,7 +2018,7 @@ function locationLabel(path: string): string {
   return parent === '/' ? 'Home' : parent.slice(1)
 }
 
-function ListView({ rows, sort, onSort, actions, showLocation }: ListProps) {
+function ListView({ rows, sort, onSort, actions, showLocation, focusPath, focusSeq, focusEntry }: ListProps) {
   const viewport = useRef<HTMLDivElement>(null)
 
   const virtualizer = useVirtualizer({
@@ -1979,8 +2032,39 @@ function ListView({ rows, sort, onSort, actions, showLocation }: ListProps) {
     overscan: 8,
   })
 
+  useEffect(() => {
+    if (!focusPath) return
+    const idx = rows.findIndex((r) => r.type === 'entry' && r.entry.path === focusPath)
+    if (idx < 0) return
+    virtualizer.scrollToIndex(idx)
+    const id = requestAnimationFrame(() => {
+      viewport.current
+        ?.querySelector<HTMLElement>(`[data-entry-path="${CSS.escape(focusPath)}"]`)
+        ?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [focusPath, focusSeq, rows, virtualizer])
+
+  const move = (step: -1 | 1) => {
+    if (!focusPath) return
+    const entryRows = rows.filter((r): r is Extract<ListItem, { type: 'entry' }> => r.type === 'entry')
+    const i = entryRows.findIndex((r) => r.entry.path === focusPath)
+    const next = entryRows[i + step]
+    if (!next) return
+    focusEntry(next.entry.path)
+  }
+
   return (
-    <div ref={viewport} className="min-h-0 flex-1 overflow-auto">
+    <div
+      ref={viewport}
+      className="min-h-0 flex-1 overflow-auto"
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
+        if (e.altKey || e.metaKey || e.ctrlKey) return
+        e.preventDefault()
+        move(e.key === 'ArrowDown' ? 1 : -1)
+      }}
+    >
       <div className={`${listGrid} sticky top-0 z-10 border-b bg-background px-4 py-2 text-xs font-medium text-muted-foreground`}>
         <span />
         <SortHeader label="Name" active={sort.key === 'name'} dir={sort.dir} onClick={() => onSort('name')} />
@@ -2005,7 +2089,13 @@ function ListView({ rows, sort, onSort, actions, showLocation }: ListProps) {
                   <span className="text-muted-foreground/60">{row.count}</span>
                 </div>
               ) : (
-                <ListRow entry={row.entry} actions={actions} showLocation={showLocation} />
+                <ListRow
+                  entry={row.entry}
+                  actions={actions}
+                  showLocation={showLocation}
+                  focused={focusPath === row.entry.path}
+                  onFocus={() => focusEntry(row.entry.path)}
+                />
               )}
             </div>
           )
@@ -2042,7 +2132,19 @@ function SortHeader({
   )
 }
 
-function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: EntryActions; showLocation: boolean }) {
+function ListRow({
+  entry,
+  actions,
+  showLocation,
+  focused,
+  onFocus,
+}: {
+  entry: Entry
+  actions: EntryActions
+  showLocation: boolean
+  focused: boolean
+  onFocus: () => void
+}) {
   const { icon: Icon, color } = entryKind(entry)
   const selected = actions.isSelected(entry)
   const shared = actions.isShared(entry)
@@ -2051,10 +2153,10 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
     <EntryMenu entry={entry} actions={actions}>
       <div
         role="button"
-        tabIndex={0}
+        tabIndex={focused ? 0 : -1}
         aria-selected={selected}
         data-entry-path={entry.path}
-        className={`group ${listGrid} h-12 cursor-default border-b border-border/60 px-4 outline-none select-none ${
+        className={`group ${listGrid} h-12 cursor-default border-b border-border/60 px-4 outline-none select-none focus:ring-2 focus:ring-inset focus:ring-primary ${
           isTarget
             ? 'bg-primary/15 ring-2 ring-inset ring-primary'
             : selected
@@ -2062,6 +2164,7 @@ function ListRow({ entry, actions, showLocation }: { entry: Entry; actions: Entr
               : 'hover:bg-accent/60'
         }`}
         {...drag}
+        onFocus={onFocus}
         onClick={(e) => actions.select(entry, intentOf(e))}
         onDoubleClick={() => actions.open(entry)}
         onKeyDown={(e) => {
@@ -2146,14 +2249,66 @@ function GridView({
   actions,
   size,
   showLocation,
+  focusPath,
+  focusSeq,
+  focusEntry,
 }: {
   groups: Group[]
   actions: EntryActions
   size: GridSize
   showLocation: boolean
+  focusPath: string | null
+  focusSeq: number
+  focusEntry: (path: string | null) => void
 }) {
+  const root = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!focusPath) return
+    const el = root.current?.querySelector<HTMLElement>(
+      `[data-entry-path="${CSS.escape(focusPath)}"]`,
+    )
+    el?.focus({ preventScroll: true })
+    el?.scrollIntoView({ block: 'nearest' })
+  }, [focusPath, focusSeq])
+
+  const move = (key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => {
+    const container = root.current
+    if (!container) return
+    const tiles = [...container.querySelectorAll<HTMLElement>('[data-entry-path]')]
+    const current = focusPath
+      ? tiles.find((t) => t.getAttribute('data-entry-path') === focusPath)
+      : tiles[0]
+    if (!current) return
+    const from = current.getBoundingClientRect()
+    const fx = from.left + from.width / 2
+    const fy = from.top + from.height / 2
+    let best: { el: HTMLElement; score: number } | null = null
+    for (const el of tiles) {
+      if (el === current) continue
+      const r = el.getBoundingClientRect()
+      const dx = r.left + r.width / 2 - fx
+      const dy = r.top + r.height / 2 - fy
+      const along = key === 'ArrowUp' ? -dy : key === 'ArrowDown' ? dy : key === 'ArrowLeft' ? -dx : dx
+      if (along <= 1) continue
+      const across = key === 'ArrowUp' || key === 'ArrowDown' ? Math.abs(dx) : Math.abs(dy)
+      const score = along + across * 3
+      if (!best || score < best.score) best = { el, score }
+    }
+    if (best) focusEntry(best.el.getAttribute('data-entry-path'))
+  }
+
   return (
-    <div className="min-h-0 flex-1 overflow-auto p-4">
+    <div
+      ref={root}
+      className="min-h-0 flex-1 overflow-auto p-4"
+      onKeyDown={(e) => {
+        if (!(e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return
+        if (e.altKey || e.metaKey || e.ctrlKey) return
+        e.preventDefault()
+        move(e.key)
+      }}
+    >
       {groups.map((g) => (
         <section key={g.key} className="mb-4">
           {g.label && (
@@ -2167,7 +2322,15 @@ function GridView({
             style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${size.min}, 1fr))` }}
           >
             {g.entries.map((entry) => (
-              <GridTile key={entry.path} entry={entry} actions={actions} size={size} showLocation={showLocation} />
+              <GridTile
+                key={entry.path}
+                entry={entry}
+                actions={actions}
+                size={size}
+                showLocation={showLocation}
+                focused={focusPath === entry.path}
+                onFocus={() => focusEntry(entry.path)}
+              />
             ))}
           </div>
         </section>
@@ -2176,7 +2339,21 @@ function GridView({
   )
 }
 
-function GridTile({ entry, actions, size, showLocation }: { entry: Entry; actions: EntryActions; size: GridSize; showLocation: boolean }) {
+function GridTile({
+  entry,
+  actions,
+  size,
+  showLocation,
+  focused,
+  onFocus,
+}: {
+  entry: Entry
+  actions: EntryActions
+  size: GridSize
+  showLocation: boolean
+  focused: boolean
+  onFocus: () => void
+}) {
   const { icon: Icon, color } = entryKind(entry)
   const selected = actions.isSelected(entry)
   const shared = actions.isShared(entry)
@@ -2185,10 +2362,10 @@ function GridTile({ entry, actions, size, showLocation }: { entry: Entry; action
     <EntryMenu entry={entry} actions={actions}>
       <div
         role="button"
-        tabIndex={0}
+        tabIndex={focused ? 0 : -1}
         aria-selected={selected}
         data-entry-path={entry.path}
-        className={`flex cursor-default flex-col gap-2 rounded-lg border p-2 text-center outline-none select-none ${
+        className={`flex cursor-default flex-col gap-2 rounded-lg border p-2 text-center outline-none select-none focus:ring-2 focus:ring-primary ${
           isTarget
             ? 'border-primary bg-primary/15 ring-2 ring-primary'
             : selected
@@ -2196,6 +2373,7 @@ function GridTile({ entry, actions, size, showLocation }: { entry: Entry; action
               : 'border-transparent hover:border-border hover:bg-accent/60'
         }`}
         {...drag}
+        onFocus={onFocus}
         onClick={(e) => actions.select(entry, intentOf(e))}
         onDoubleClick={() => actions.open(entry)}
         onKeyDown={(e) => {
