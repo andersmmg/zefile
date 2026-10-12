@@ -2511,7 +2511,9 @@ function GridTile({
           )}
         </div>
         <div className="min-w-0 px-1">
-          <p className="line-clamp-2 wrap-break-word text-sm">{isMembersTop(entry.path) ? "Members" : entry.name}</p>
+          <p className={`line-clamp-2 wrap-break-word text-sm inline-block px-2 max-w-full rounded-md ${
+            tint ?? 'bg-none'
+          }`}>{isMembersTop(entry.path) ? "Members" : entry.name}</p>
           {showLocation ? (
             <p className="truncate text-xs text-muted-foreground" title={locationLabel(entry.path)}>
               {locationLabel(entry.path)}

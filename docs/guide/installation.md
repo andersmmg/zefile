@@ -79,7 +79,9 @@ carry a session cookie.
   images, video, audio, text and PDF.
 - **One origin (supported).** Leave `ZEFILE_CONTENT_URL` unset. The instance
   hardens itself automatically but sends every file as a download instead of
-  previewing it in place.
+  previewing it in place. On the object-storage backend this does not apply:
+  files are answered by presigned redirects to the store's own origin, so
+  previews work either way.
 
 See [Deployment](/guide/deployment) for a reverse-proxy example, and
 [Environment variables](/reference/environment) for the full list.

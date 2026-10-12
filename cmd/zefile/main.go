@@ -292,12 +292,13 @@ func run() error {
 	}).Handler()
 
 	contentHandler := content.New(content.Options{
-		FS:           fs,
-		Signer:       signer,
-		Subject:      acl.NewSubjectLoader(database, engine),
-		Shares:       shareService,
-		SingleOrigin: cfg.SingleOrigin(),
-		PresignTTL:   cfg.S3.PresignTTL,
+		FS:            fs,
+		Signer:        signer,
+		Subject:       acl.NewSubjectLoader(database, engine),
+		Shares:        shareService,
+		SingleOrigin:  cfg.SingleOrigin(),
+		ObjectStorage: cfg.Backend == config.BackendS3,
+		PresignTTL:    cfg.S3.PresignTTL,
 	}).Handler()
 
 	server := &http.Server{
@@ -669,6 +670,13 @@ func announceSetup(ctx context.Context, service *auth.Service, cfg config.Config
 
 func warnAboutSingleOrigin(cfg config.Config) {
 	if !cfg.SingleOrigin() {
+		return
+	}
+	if cfg.Backend == config.BackendS3 {
+		slog.Warn("running with a single origin",
+			"note", "downloads are presigned redirects to the object store; inline preview stays enabled",
+			"fix", "set "+config.EnvContentURL+" to a second hostname to serve content from a dedicated host",
+		)
 		return
 	}
 	slog.Warn("running with a single origin: user content is served from the application origin",

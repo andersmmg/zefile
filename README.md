@@ -136,7 +136,7 @@ Two things decide whether a deployment works:
 | | |
 | --- | --- |
 | `ZEFILE_CONFIG_DIR` | Must not sit inside `ZEFILE_DATA_DIR`. Zefile refuses to start otherwise: a database users can list is one they can download, password hashes included. |
-| `ZEFILE_CONTENT_URL` | A second hostname. Without it, user content is served from the application origin and Zefile hardens itself — every file becomes an attachment and nothing renders in place. |
+| `ZEFILE_CONTENT_URL` | A second hostname. Without it, user content is served from the application origin and Zefile hardens itself — every file becomes an attachment and nothing renders in place. On the object-storage backend this degradation does not apply: downloads are presigned redirects to the store's own origin, so previews keep working. |
 
 There are **no `PUID`/`PGID` to set**. Zefile adopts whoever owns the data
 directory you mount, so a folder you own just works. The one exception: it will

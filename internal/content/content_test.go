@@ -602,6 +602,44 @@ func TestSingleOriginHardening(t *testing.T) {
 	}
 }
 
+func TestSingleOriginObjectStorageInline(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t, func(o *content.Options) {
+		o.SingleOrigin = true
+		o.ObjectStorage = true
+	})
+
+	for _, tc := range []struct {
+		file       string
+		wantInline bool
+	}{
+		{"notes.pdf", true},
+		{"photo.jpg", true},
+		// The allowlist still refuses an executable type.
+		{"page.html", false},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			p := f.write(t, tc.file, []byte("x"))
+			resp := f.get(t, f.url(p), nil)
+			defer resp.Body.Close()
+
+			disposition := resp.Header.Get("Content-Disposition")
+			if isInline := strings.HasPrefix(disposition, "inline"); isInline != tc.wantInline {
+				t.Errorf("Content-Disposition = %q, want inline=%v", disposition, tc.wantInline)
+			}
+		})
+	}
+
+	// A forced download (?download=1) is still an attachment.
+	p := f.write(t, "forced.pdf", []byte("x"))
+	resp := f.get(t, f.url(p)+"?download=1", nil)
+	defer resp.Body.Close()
+	if got := resp.Header.Get("Content-Disposition"); !strings.HasPrefix(got, "attachment") {
+		t.Errorf("download=1 Content-Disposition = %q, want attachment", got)
+	}
+}
+
 func TestAccentedFilenameSurvives(t *testing.T) {
 	t.Parallel()
 

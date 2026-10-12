@@ -40,7 +40,8 @@ type Server struct {
 
 	// singleOrigin hardens every response when the instance serves content from
 	// the application origin. See [Options].
-	singleOrigin bool
+	singleOrigin  bool
+	objectStorage bool
 }
 
 // Options configures a [Server].
@@ -58,6 +59,8 @@ type Options struct {
 	// the session.
 	SingleOrigin bool
 
+	ObjectStorage bool
+
 	// PresignTTL bounds download URLs minted when the backend serves files
 	// straight from storage. Zero means the backend default.
 	PresignTTL time.Duration
@@ -65,7 +68,14 @@ type Options struct {
 
 // New builds the content-origin handler.
 func New(opts Options) *Server {
-	return &Server{fs: opts.FS, signer: opts.Signer, subject: opts.Subject, shares: opts.Shares, singleOrigin: opts.SingleOrigin, presignTTL: opts.PresignTTL}
+	return &Server{
+		fs: opts.FS, signer: opts.Signer, subject: opts.Subject, shares: opts.Shares,
+		singleOrigin: opts.SingleOrigin, objectStorage: opts.ObjectStorage, presignTTL: opts.PresignTTL,
+	}
+}
+
+func (s *Server) hardened() bool {
+	return s.singleOrigin && !s.objectStorage
 }
 
 // Handler returns the routed handler.
@@ -603,7 +613,7 @@ func (s *Server) setHeaders(w http.ResponseWriter, p storage.Path, size int64, f
 		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+encodeFilename(p.Name()))
 	}
 
-	if s.singleOrigin {
+	if s.hardened() {
 		// The sandbox strips scripts, forms and same-origin privileges from
 		// whatever is rendered, which is what makes serving content from the
 		// application origin survivable rather than merely inadvisable.
@@ -636,7 +646,7 @@ var inlineTypes = map[string]bool{
 }
 
 func (s *Server) inlineAllowed(contentType string) bool {
-	if s.singleOrigin {
+	if s.hardened() {
 		// Nothing renders in place when content shares the application origin.
 		return false
 	}

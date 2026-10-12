@@ -659,7 +659,10 @@ type configResponse struct {
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, r, http.StatusOK, configResponse{InlinePreview: !s.singleOrigin, Version: s.version})
+	writeJSON(w, r, http.StatusOK, configResponse{
+		InlinePreview: !s.singleOrigin || s.objectStorage,
+		Version:       s.version,
+	})
 }
 
 func pathParam(w http.ResponseWriter, r *http.Request) (storage.Path, bool) {

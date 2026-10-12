@@ -18,6 +18,11 @@ from `ZEFILE_APP_URL`. When set, files are served from this cookieless origin
 and can be previewed in place. When unset, the instance runs in single-origin
 mode: it hardens itself automatically but sends every file as a download.
 
+The hardening only applies to backends that stream files through the
+application itself. With the object-storage backend, downloads are presigned
+redirects to the store's own origin, so inline preview works regardless of
+this variable.
+
 Zefile refuses to start if this shares a host with `ZEFILE_APP_URL` — separate
 origins are what keep an uploaded file from reaching a session.
 
