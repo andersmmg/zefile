@@ -18,6 +18,22 @@ import {
 
 import type { Entry } from '@/api'
 
+/** character budget for a file name shown in the browser before they
+ * will be truncated
+ */
+export const NAME_LIMIT = 32
+
+export function shortName(name: string, limit: number = NAME_LIMIT): string {
+  if (name.length <= limit) return name
+  const sep = '...'
+  const dot = name.lastIndexOf('.')
+  const ext = dot > 0 && name.length - dot <= 12 ? name.slice(dot) : ''
+  const half = Math.floor((limit - sep.length) / 2)
+  const tail = Math.max(ext.length, Math.min(half, name.length - 1))
+  const head = Math.max(1, limit - sep.length - tail)
+  return name.slice(0, head) + sep + name.slice(name.length - tail)
+}
+
 type Kind = { icon: Icon; color: string }
 
 // File-type colours are a categorical palette, not brand tokens: a reader scans

@@ -1,6 +1,7 @@
 import {
   ArrowDownIcon,
   ArrowUpIcon,
+  ArrowsClockwiseIcon,
   CaretRightIcon,
   CaretUpIcon,
   CheckIcon,
@@ -105,7 +106,7 @@ import {
   type ColorId
 } from '@/lib/colors'
 import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
-import { canThumb, categoryLabel, entryKind, formatRelativeTime, isMembersTop } from '@/lib/files'
+import { canThumb, categoryLabel, entryKind, formatRelativeTime, isMembersTop, shortName } from '@/lib/files'
 import { Empty } from './App'
 import {
   api,
@@ -208,6 +209,9 @@ type EntryActions = {
   cut: (entry: Entry) => void
   paste: () => void
   rename: (entry: Entry) => void
+  renaming: string | null
+  commitRename: (entry: Entry, name: string) => void
+  cancelRename: () => void
   remove: (entry: Entry) => void
   contextTarget: (entry: Entry) => void
   setColor: (entry: Entry, color: ColorId | null) => void
@@ -229,6 +233,10 @@ type EntryActions = {
   dropTarget: string | null
   setDropTarget: (path: string | null) => void
 }
+
+const AUTO_REFRESH_MS = 30_000
+// min gap after coming back to the tab
+const AUTO_REFRESH_MIN_GAP_MS = 5_000
 
 /** MOVE_MIME marks an in-app drag so it is told apart from an OS file drag (an
  *  upload). The payload is the JSON array of paths being moved. */
@@ -275,7 +283,6 @@ type ListItem = { type: 'header'; id: string; label: string; count: number } | {
 type DialogState =
   | { kind: 'new-folder' }
   | { kind: 'fetch-url' }
-  | { kind: 'rename'; entry: Entry }
   | { kind: 'delete'; entries: Entry[] }
   | { kind: 'share'; entry: Entry }
   | { kind: 'access'; entry: Entry }
@@ -310,6 +317,8 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   }, [])
   const [screen, setScreen] = useState<Screen>(() => initialLocation.screen)
   const [preview, setPreview] = useState<Entry | null>(null)
+  const [renaming, setRenaming] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
   const [inlinePreview, setInlinePreview] = useState(false)
   const [version, setVersion] = useState('')
   const [sharedPaths, setSharedPaths] = useState<Set<string>>(() => new Set())
@@ -331,6 +340,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const uploadControllers = useRef(new Map<string, AbortController>())
   const pathRef = useRef(path)
   pathRef.current = path
+  const lastRefreshAt = useRef(Date.now())
 
   useEffect(() => {
     localStorage.setItem(
@@ -370,6 +380,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     try {
       const listing = await api.list(target)
       setEntries(listing.entries)
+      lastRefreshAt.current = Date.now()
     } catch (err) {
       if (silent) return // a transient refresh failure must not blank the view
       setEntries([])
@@ -403,8 +414,29 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     void load(path)
     clearSelection()
     setPreview(null)
+    setRenaming(null)
     setFocusPath(null)
   }, [path, load, clearSelection])
+
+  // auto refresh, skipped when tab is hidden
+  useEffect(() => {
+    const refresh = () => {
+      if (document.hidden) return
+      if (Date.now() - lastRefreshAt.current < AUTO_REFRESH_MIN_GAP_MS) return
+      void load(pathRef.current, { silent: true })
+    }
+    const onWake = () => {
+      if (!document.hidden) refresh()
+    }
+    const tick = window.setInterval(refresh, AUTO_REFRESH_MS)
+    document.addEventListener('visibilitychange', onWake)
+    window.addEventListener('focus', onWake)
+    return () => {
+      window.clearInterval(tick)
+      document.removeEventListener('visibilitychange', onWake)
+      window.removeEventListener('focus', onWake)
+    }
+  }, [load])
 
   const firstLocation = useRef(true)
   useEffect(() => {
@@ -820,6 +852,19 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     [path, clearSelection, load, refreshSpace],
   )
 
+  function cancelRename() {
+    setRenaming(null)
+  }
+
+  function commitRename(entry: Entry, name: string) {
+    setRenaming(null)
+    const trimmed = name.trim()
+    if (!trimmed || trimmed === entry.name) return
+    void renameEntry(entry, trimmed).catch((err) => {
+      toast.error(err instanceof ApiError ? err.message : `Could not rename “${entry.name}”`)
+    })
+  }
+
   const actions: EntryActions = {
     select: selectEntry,
     open: (entry) => {
@@ -839,7 +884,10 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     copy: (entry) => setClipboard({ mode: 'copy', entries: clipboardTargets(entry) }),
     cut: (entry) => setClipboard({ mode: 'cut', entries: clipboardTargets(entry) }),
     paste: () => void doPaste(),
-    rename: (entry) => setDialog({ kind: 'rename', entry }),
+    rename: (entry) => setRenaming(entry.path),
+    renaming,
+    commitRename,
+    cancelRename,
     remove: (entry) => setDialog({ kind: 'delete', entries: [entry] }),
     contextTarget: (entry) => {
       if (!selection.has(entry.path)) selectEntry(entry, 'replace')
@@ -985,7 +1033,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         const target = selected[0]!
         if (perms.write && perms.delete && !isMembersTop(target.path)) {
           e.preventDefault()
-          setDialog({ kind: 'rename', entry: target })
+          setRenaming(target.path)
         }
         return
       }
@@ -1423,6 +1471,22 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   Paste ({clipboard.entries.length})
                 </button>
               )}
+              <Button
+                variant="outline"
+                size="icon"
+                className="size-8"
+                aria-label="Refresh listing"
+                title="Refresh"
+                disabled={refreshing}
+                onClick={() => {
+                  setRefreshing(true)
+                  void Promise.all([load(path, { silent: true }), refreshSpace()]).finally(() =>
+                    setRefreshing(false),
+                  )
+                }}
+              >
+                <ArrowsClockwiseIcon className={refreshing ? 'animate-spin' : undefined} />
+              </Button>
               <ViewToggle view={view} onChange={setView} />
               <DisplayOptions
                 sort={sort}
@@ -1531,16 +1595,6 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
           submitLabel="Download"
           paste
           onSubmit={fetchFromUrl}
-          onClose={() => setDialog(null)}
-        />
-      )}
-      {dialog?.kind === 'rename' && (
-        <NameDialog
-          title="Rename"
-          label="New name"
-          submitLabel="Rename"
-          initial={dialog.entry.name}
-          onSubmit={(name) => renameEntry(dialog.entry, name)}
           onClose={() => setDialog(null)}
         />
       )}
@@ -1690,9 +1744,10 @@ function BoxOverlay({ rect, fading }: { rect: BoxRect; fading: boolean }) {
 function moveDragProps(entry: Entry, actions: EntryActions, variant: 'tile' | 'row' = 'tile') {
   const managed = isMembersTop(entry.path)
   const isTarget = entry.is_dir && actions.dropTarget === entry.path
+  const renaming = actions.renaming === entry.path
   return {
     isTarget,
-    draggable: !managed,
+    draggable: !managed && !renaming,
     onDragStart: (e: DragEvent) => {
       if (managed) return
       const paths = actions.dragPaths(entry)
@@ -2115,6 +2170,7 @@ function ListView({ rows, sort, onSort, actions, showLocation, focusPath, focusS
 
   useEffect(() => {
     if (!focusPath) return
+    if (actions.renaming) return
     const idx = rows.findIndex((r) => r.type === 'entry' && r.entry.path === focusPath)
     if (idx < 0) return
     virtualizer.scrollToIndex(idx)
@@ -2124,7 +2180,7 @@ function ListView({ rows, sort, onSort, actions, showLocation, focusPath, focusS
         ?.focus({ preventScroll: true })
     })
     return () => cancelAnimationFrame(id)
-  }, [focusPath, focusSeq, rows, virtualizer])
+  }, [focusPath, focusSeq, rows, virtualizer, actions.renaming])
 
   const move = (step: -1 | 1) => {
     if (!focusPath) return
@@ -2213,6 +2269,51 @@ function SortHeader({
   )
 }
 
+/** RenameField swaps an entry's name for a live input: Enter applies, Escape
+ *  — or a click anywhere outside it, which blurs it — cancels. Keys stop at
+ *  the input so the row behind never reads Enter as "open" or Space as
+ *  "toggle", and the initial value is selected so typing replaces the name. */
+function RenameField({
+  entry,
+  actions,
+  className,
+}: {
+  entry: Entry
+  actions: EntryActions
+  className: string
+}) {
+  const [value, setValue] = useState(entry.name)
+  return (
+    <input
+      autoFocus
+      value={value}
+      aria-label={`Rename ${entry.name}`}
+      className={`select-text ${className}`}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onFocus={(e) => {
+        // The rows refocus themselves whenever focus bubbles up to them
+        // (focusSeq), which would yank focus from this input, blur it, and
+        // cancel the rename the moment it starts. Keep focus here.
+        e.stopPropagation()
+        e.currentTarget.select()
+      }}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={() => actions.cancelRename()}
+      onKeyDown={(e) => {
+        e.stopPropagation()
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          actions.commitRename(entry, value)
+        } else if (e.key === 'Escape') {
+          e.preventDefault()
+          actions.cancelRename()
+        }
+      }}
+    />
+  )
+}
+
 function ListRow({
   entry,
   actions,
@@ -2282,7 +2383,17 @@ function ListRow({
                 aria-label={colorLabel(entry.color)}
               />
             )}
-            <span className="truncate text-sm">{entry.name}</span>
+            {actions.renaming === entry.path ? (
+              <RenameField
+                entry={entry}
+                actions={actions}
+                className="h-7 min-w-0 flex-1 rounded border border-primary bg-background px-2 text-sm outline-none"
+              />
+            ) : (
+              <span className="truncate text-sm" title={entry.name}>
+                {shortName(entry.name)}
+              </span>
+            )}
             {shared && (
               <LinkSimpleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Shared" />
             )}
@@ -2362,12 +2473,15 @@ function GridView({
 
   useEffect(() => {
     if (!focusPath) return
+    // As in the list: an inline rename holds the focus; refocusing the row
+    // would blur the input and cancel the edit.
+    if (actions.renaming) return
     const el = root.current?.querySelector<HTMLElement>(
       `[data-entry-path="${CSS.escape(focusPath)}"]`,
     )
     el?.focus({ preventScroll: true })
     el?.scrollIntoView({ block: 'nearest' })
-  }, [focusPath, focusSeq])
+  }, [focusPath, focusSeq, actions.renaming])
 
   const move = (key: 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight') => {
     const container = root.current
@@ -2511,9 +2625,20 @@ function GridTile({
           )}
         </div>
         <div className="min-w-0 px-1">
-          <p className={`line-clamp-2 wrap-break-word text-sm inline-block px-2 max-w-full rounded-md ${
-            tint ?? 'bg-none'
-          }`}>{isMembersTop(entry.path) ? "Members" : entry.name}</p>
+          {actions.renaming === entry.path ? (
+            <RenameField
+              entry={entry}
+              actions={actions}
+              className="h-8 w-full rounded border border-primary bg-background px-2 text-center text-sm outline-none"
+            />
+          ) : (
+            <p
+              className={`line-clamp-2 wrap-anywhere text-sm inline-block px-2 max-w-full rounded-md ${tint ?? 'bg-none'}`}
+              title={entry.name}
+            >
+              {shortName(entry.name)}
+            </p>
+          )}
           {showLocation ? (
             <p className="truncate text-xs text-muted-foreground" title={locationLabel(entry.path)}>
               {locationLabel(entry.path)}
