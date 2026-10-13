@@ -155,6 +155,11 @@ type ChecksumStore interface {
 	ObjectChecksum(ctx context.Context, p Path) (string, error)
 }
 
+// reports the bytes available on the volume holding path
+func FreeSpace(path string) (available, total uint64, err error) {
+	return availableSpace(path)
+}
+
 // The As* helpers adapt a backend to the capability a caller needs,
 // returning a refusal answering [ErrNotSupported] when it lacks one.
 func AsStager(fs FS) Stager {

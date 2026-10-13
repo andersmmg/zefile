@@ -403,7 +403,9 @@ export const api = {
     ),
 
   config: () =>
-    request<{ inline_preview: boolean; object_storage: boolean; version: string }>('/api/v1/config'),
+    request<{ inline_preview: boolean; object_storage: boolean; url_fetch: boolean; version: string }>(
+      '/api/v1/config',
+    ),
 
   createShare: (path: string, opts: { expires_in_hours?: number; password?: string } = {}) =>
     request<Share>('/api/v1/shares', {

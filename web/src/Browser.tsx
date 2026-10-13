@@ -325,6 +325,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const [refreshing, setRefreshing] = useState(false)
   const [inlinePreview, setInlinePreview] = useState(false)
   const [objectStorage, setObjectStorage] = useState(false)
+  const [urlFetch, setUrlFetch] = useState(false)
   const [version, setVersion] = useState('')
   const [sharedPaths, setSharedPaths] = useState<Set<string>>(() => new Set())
   const [clipboard, setClipboard] = useState<Clipboard | null>(null)
@@ -502,6 +503,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       .then((c) => {
         setInlinePreview(c.inline_preview)
         setObjectStorage(c.object_storage)
+        setUrlFetch(c.url_fetch)
         setVersion(c.version)
       })
       .catch(() => undefined)
@@ -716,6 +718,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     importFiles: () => fileInput.current?.click(),
     importFolder: () => dirInput.current?.click(),
     fetchUrl: () => setDialog({ kind: 'fetch-url' }),
+    canFetchUrl: urlFetch,
   }
 
   // In search mode the listing is the server's results (which span folders);

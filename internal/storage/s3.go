@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -68,20 +69,24 @@ type S3Config struct {
 	// per-file round trips. Nil disables the cache; every operation
 	// then talks to S3 directly. See [MetaCache].
 	MetaCache MetaCache
+
+	StageDir string
 }
 
 // S3 is an [FS] backed by an S3-compatible object store.
 type S3 struct {
-	client     *awss3.Client
-	presign    *awss3.PresignClient
-	public     *awss3.PresignClient // nil when clients share the endpoint
-	bucket     string
-	prefix     string // "" or "data" — no leading or trailing slash
-	guard      Guard
-	readOnly   bool
-	partSize   int64
-	presignTTL time.Duration
-	meta       MetaCache // nil means uncached
+	client         *awss3.Client
+	presign        *awss3.PresignClient
+	public         *awss3.PresignClient // nil when clients share the endpoint
+	bucket         string
+	prefix         string // "" or "data" — no leading or trailing slash
+	guard          Guard
+	readOnly       bool
+	partSize       int64
+	presignTTL     time.Duration
+	meta           MetaCache // nil means uncached
+	stageDir       string
+	stageEphemeral bool
 	// presigns reuses capability URLs within their validity window so
 	// redirects to the store stay stable and the browser's HTTP cache can
 	// answer repeated previews. See [presignCache].
@@ -128,6 +133,20 @@ func OpenS3(cfg S3Config) (*S3, error) {
 		presignTTL: presignTTL,
 		meta:       cfg.MetaCache,
 	}
+	// The staging directory is local disk on purpose
+	if cfg.StageDir != "" {
+		if err := os.MkdirAll(cfg.StageDir, 0o750); err != nil {
+			return nil, fmt.Errorf("storage: s3 staging directory: %w", err)
+		}
+		s.stageDir = cfg.StageDir
+	} else {
+		dir, err := os.MkdirTemp("", "zefile-stages")
+		if err != nil {
+			return nil, fmt.Errorf("storage: s3 staging directory: %w", err)
+		}
+		s.stageDir = dir
+		s.stageEphemeral = true
+	}
 	if cfg.PublicEndpoint != "" && cfg.PublicEndpoint != cfg.Endpoint {
 		// Capability URLs must resolve where the client runs.
 		pub, err := newS3Client(cfg, cfg.PublicEndpoint)
@@ -168,7 +187,12 @@ func newS3Client(cfg S3Config, endpoint string) (*awss3.Client, error) {
 	}), nil
 }
 
-func (s *S3) Close() error { return nil }
+func (s *S3) Close() error {
+	if s.stageEphemeral {
+		_ = os.RemoveAll(s.stageDir)
+	}
+	return nil
+}
 
 // ------------------------------------------------------------------ read path
 

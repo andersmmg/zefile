@@ -118,6 +118,33 @@ func TestS3BackendValidation(t *testing.T) {
 	}
 }
 
+func TestAllowURLFetch(t *testing.T) {
+	setBaseEnv(t)
+	t.Setenv(EnvDataDir, t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AllowURLFetch {
+		t.Error("AllowURLFetch = true by default, want false")
+	}
+
+	t.Setenv(EnvAllowURLFetch, "true")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load with %s=true: %v", EnvAllowURLFetch, err)
+	}
+	if !cfg.AllowURLFetch {
+		t.Error("AllowURLFetch = false, want true")
+	}
+
+	t.Setenv(EnvAllowURLFetch, "perhaps")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), EnvAllowURLFetch) {
+		t.Errorf("Load with %s=perhaps = %v, want an %s error", EnvAllowURLFetch, err, EnvAllowURLFetch)
+	}
+}
+
 func TestPreviewMaxBytes(t *testing.T) {
 	setBaseEnv(t)
 	t.Setenv(EnvDataDir, t.TempDir())

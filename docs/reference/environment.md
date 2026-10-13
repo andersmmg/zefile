@@ -26,6 +26,16 @@ this variable.
 Zefile refuses to start if this shares a host with `ZEFILE_APP_URL` — separate
 origins are what keep an uploaded file from reaching a session.
 
+### `ZEFILE_ALLOW_URL_FETCH`
+
+*Optional, default `false`.* Lets the server download files from user-supplied
+URLs using the interface's **Download from URL** import.
+
+When on, the download runs as a background job with the usual defences:
+public addresses only, revalidated on every redirect hop, and is bounded by
+free disk space on both the local download staging volume and the storage space
+quota.
+
 ## Storage
 
 ### `ZEFILE_DATA_DIR`

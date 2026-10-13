@@ -9,7 +9,7 @@ import {
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-/** CreateActions are the three ways to add content to the current folder. The
+/** CreateActions are the ways to add content to the current folder. The
  *  same set backs the sidebar's "New" button and the empty-area right-click
  *  menu, so both offer exactly the same choices. */
 export type CreateActions = {
@@ -17,13 +17,16 @@ export type CreateActions = {
   importFiles: () => void
   importFolder: () => void
   fetchUrl: () => void
+  canFetchUrl: boolean
 }
 
 const items = (a: CreateActions) => [
   { key: 'folder', Icon: FolderPlusIcon, label: 'New folder', run: a.newFolder },
   { key: 'files', Icon: FileArrowUpIcon, label: 'Import files', run: a.importFiles },
   { key: 'import-folder', Icon: FolderSimplePlusIcon, label: 'Import folder', run: a.importFolder },
-  { key: 'fetch-url', Icon: LinkSimpleIcon, label: 'Download from URL', run: a.fetchUrl },
+  ...(a.canFetchUrl
+    ? [{ key: 'fetch-url', Icon: LinkSimpleIcon, label: 'Download from URL', run: a.fetchUrl }]
+    : []),
 ]
 
 /** NewButton is the sidebar's primary action: a dropdown that gathers creating a

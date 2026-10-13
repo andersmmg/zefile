@@ -31,6 +31,8 @@ const (
 	EnvReserve    = "ZEFILE_RESERVE_BYTES"
 	EnvReadOnly   = "ZEFILE_READ_ONLY"
 
+	EnvAllowURLFetch = "ZEFILE_ALLOW_URL_FETCH"
+
 	// Backend and object-storage settings
 	EnvThumbMaxBytes     = "ZEFILE_THUMB_MAX_BYTES"
 	EnvPreviewMaxBytes   = "ZEFILE_PREVIEW_MAX_BYTES"
@@ -122,6 +124,8 @@ type Config struct {
 
 	// ReadOnly refuses every write regardless of free space.
 	ReadOnly bool
+
+	AllowURLFetch bool
 
 	// PreviewMaxBytes bounds server-side preview reads.
 	PreviewMaxBytes int64
@@ -243,6 +247,13 @@ func Load() (Config, error) {
 			return Config{}, fmt.Errorf("config: %s must be true or false: %w", EnvReadOnly, err)
 		}
 		cfg.ReadOnly = b
+	}
+	if raw := os.Getenv(EnvAllowURLFetch); raw != "" {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return Config{}, fmt.Errorf("config: %s must be true or false: %w", EnvAllowURLFetch, err)
+		}
+		cfg.AllowURLFetch = b
 	}
 	if raw := strings.TrimSpace(os.Getenv(EnvPreviewMaxBytes)); raw != "" {
 		n, err := parseBytes(EnvPreviewMaxBytes, raw)

@@ -45,6 +45,7 @@ type Server struct {
 
 	previewMaxBytes int64
 	objectStorage   bool
+	urlFetch        bool
 	thumbs          *thumb.Service
 	quota           *quota.Service
 	colors          *color.Service
@@ -89,6 +90,8 @@ type Options struct {
 	// no checksum verification, thumbnail sources capped.
 	ObjectStorage bool
 
+	URLFetch bool
+
 	// Thumbs serves pre-generated thumbnails, growing them in the
 	// background. Nil keeps the on-the-fly behaviour.
 	Thumbs *thumb.Service
@@ -126,6 +129,7 @@ func New(opts Options) *Server {
 
 		previewMaxBytes: previewMaxBytes,
 		objectStorage:   opts.ObjectStorage,
+		urlFetch:        opts.URLFetch,
 		thumbs:          opts.Thumbs,
 		quota:           opts.Quota,
 		colors:          opts.Colors,

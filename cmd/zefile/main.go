@@ -170,6 +170,8 @@ func run() error {
 
 	engine := acl.New(database)
 	var fs storage.FS
+	// Server-side downloads
+	s3StageDir := filepath.Join(cfg.ConfigDir, "stages")
 	switch cfg.Backend {
 	case config.BackendS3:
 		// The metadata cache mirrors S3 listings in SQLite so browsing a
@@ -189,6 +191,7 @@ func run() error {
 			Guard:           engine,
 			ReadOnly:        cfg.ReadOnly,
 			MetaCache:       metacache.New(database.Write, cfg.S3.MetaTTL),
+			StageDir:        s3StageDir,
 		})
 	default:
 		fs, err = storage.Open(storage.Config{
@@ -202,6 +205,11 @@ func run() error {
 		return err
 	}
 	defer func() { _ = fs.Close() }()
+
+	fetchBudget := freeAboveReserve(fs)
+	if cfg.Backend == config.BackendS3 {
+		fetchBudget = stageFreeSpace(s3StageDir)
+	}
 
 	signer, err := content.NewSigner()
 	if err != nil {
@@ -252,7 +260,7 @@ func run() error {
 	jobs.Register(job.TypeCopy, copyJobHandler(storage.AsTreeCopier(fs), engine))
 	jobs.Register(job.TypeChecksum, checksumJobHandler(checksums, engine))
 	jobs.Register(job.TypeExtract, extractJobHandler(storage.AsExtractor(fs), engine))
-	jobs.Register(job.TypeFetch, fetchJobHandler(asFetchBackend(fs), engine, fetch.New(fetch.DefaultPolicy())))
+	jobs.Register(job.TypeFetch, fetchJobHandler(asFetchBackend(fs), engine, fetch.New(fetch.DefaultPolicy()), fetchBudget))
 
 	// Thumbnails grow in the background from eligible uploads and tile
 	// views. Backends without a thumb store skip the service entirely.
@@ -286,6 +294,7 @@ func run() error {
 		SecureCookies:   cfg.SecureCookies(),
 		PreviewMaxBytes: cfg.PreviewMaxBytes,
 		ObjectStorage:   cfg.Backend == config.BackendS3,
+		URLFetch:        cfg.AllowURLFetch,
 		Thumbs:          thumbs,
 		Quota:           quotas,
 		Colors:          colors,
@@ -322,12 +331,7 @@ func asUploadStore(fs storage.FS) upload.Store {
 }
 
 // fetchBackend is what the fetch job needs from a backend.
-type fetchBackend interface {
-	storage.Stager
-	Space(ctx context.Context) (storage.SpaceInfo, error)
-}
-
-func asFetchBackend(fs storage.FS) fetchBackend {
+func asFetchBackend(fs storage.FS) fetchStore {
 	return struct {
 		storage.FS
 		storage.Stager
@@ -426,11 +430,44 @@ func extractJobHandler(fs storage.Extractor, engine *acl.Engine) job.Handler {
 // stage, cancel discards it, and a crash mid-download resumes on the next start.
 
 type fetchStore interface {
+	storage.FS
 	storage.Stager
-	Space(ctx context.Context) (storage.SpaceInfo, error)
 }
 
-func fetchJobHandler(fs fetchStore, engine *acl.Engine, fetcher *fetch.Fetcher) job.Handler {
+// fetch budget for the local tree
+func freeAboveReserve(fs storage.FS) func(context.Context) (int64, error) {
+	return func(ctx context.Context) (int64, error) {
+		space, err := fs.Space(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if space.Available <= space.Reserve {
+			return 0, nil
+		}
+		avail := space.Available - space.Reserve
+		if avail > math.MaxInt64 {
+			return math.MaxInt64, nil
+		}
+		return int64(avail), nil
+	}
+}
+
+// fetch budget for object storage
+func stageFreeSpace(dir string) func(context.Context) (int64, error) {
+	return func(context.Context) (int64, error) {
+		free, _, err := storage.FreeSpace(dir)
+		if err != nil {
+			slog.Warn("fetch: no free-space report for the staging directory; downloads are unbounded", "dir", dir)
+			return math.MaxInt64, nil
+		}
+		if free > math.MaxInt64 {
+			return math.MaxInt64, nil
+		}
+		return int64(free), nil
+	}
+}
+
+func fetchJobHandler(fs fetchStore, engine *acl.Engine, fetcher *fetch.Fetcher, available func(context.Context) (int64, error)) job.Handler {
 	return func(ctx context.Context, payload string, report func(done, total int64)) error {
 		var p job.FetchPayload
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
@@ -491,22 +528,12 @@ func fetchJobHandler(fs fetchStore, engine *acl.Engine, fetcher *fetch.Fetcher) 
 			return err
 		}
 
-		// Bound the download by the free space above the reserve, refusing early
-		// if the source already declares more than will fit. Without a limit a
-		// source could stream without end and fill the disk down to the reserve.
-		space, err := fs.Space(ctx)
+		// Bound the download by the space it can land in, refusing early if
+		// the source already declares more than will fit. Without a limit a
+		// source could stream without end and fill the staging volume.
+		budget, err := available(ctx)
 		if err != nil {
 			return err
-		}
-		// Free space above the reserve, as an int64 the reader can bound on. The
-		// subtraction stays in the uint64 domain and is only narrowed once known
-		// to fit, so a pathological free-space value cannot wrap into a negative
-		// budget that would defeat the cap.
-		var budget int64 = math.MaxInt64
-		if space.Available <= space.Reserve {
-			budget = 0
-		} else if avail := space.Available - space.Reserve; avail < math.MaxInt64 {
-			budget = int64(avail)
 		}
 		if res.Size > offset+budget {
 			return fmt.Errorf("%w: the source declares %d bytes, more than the free space allows", storage.ErrNoSpace, res.Size)

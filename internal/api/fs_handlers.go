@@ -437,6 +437,11 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
 		return
 	}
+	if !s.urlFetch {
+		writeProblem(w, r, http.StatusNotImplemented, CodeNotSupported,
+			"Turned off", "The operator has not enabled downloading files from URLs on this server.")
+		return
+	}
 	var body fetchRequest
 	if !decodeJSON(w, r, &body) {
 		return
@@ -449,10 +454,9 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No staging area on object storage: refuse at enqueue.
 	if _, ok := s.fs.(storage.Stager); !ok {
 		writeProblem(w, r, http.StatusNotImplemented, CodeNotSupported,
-			"Not supported", "URL downloads are not supported for object storage.")
+			"Not supported", "This storage backend cannot stage a download.")
 		return
 	}
 
@@ -704,6 +708,8 @@ type configResponse struct {
 
 	ObjectStorage bool `json:"object_storage"`
 
+	URLFetch bool `json:"url_fetch"`
+
 	Version string `json:"version"`
 }
 
@@ -711,6 +717,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, configResponse{
 		InlinePreview: !s.singleOrigin || s.objectStorage,
 		ObjectStorage: s.objectStorage,
+		URLFetch:      s.urlFetch,
 		Version:       s.version,
 	})
 }

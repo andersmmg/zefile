@@ -53,7 +53,7 @@ type client struct {
 	quota   *quota.Service
 }
 
-func newClient(t *testing.T) *client {
+func newClient(t *testing.T, mutate ...func(*api.Options)) *client {
 	t.Helper()
 
 	database, err := db.Open(t.Context(), db.Config{Dir: t.TempDir()})
@@ -123,7 +123,7 @@ func newClient(t *testing.T) *client {
 	go jobs.Run(workerCtx)
 
 	quotaSvc := quota.New(fs, 0, engine, service)
-	srv := httptest.NewServer(api.New(api.Options{
+	opts := api.Options{
 		FS: fs, Auth: service, ACL: engine,
 		Quota:   quotaSvc,
 		Uploads: upload.New(database, fs),
@@ -137,7 +137,11 @@ func newClient(t *testing.T) *client {
 		ContentBase:   "https://content.example",
 		SecureCookies: false,
 		Colors:        entrycolor.New(database),
-	}).Handler())
+	}
+	for _, m := range mutate {
+		m(&opts)
+	}
+	srv := httptest.NewServer(api.New(opts).Handler())
 	t.Cleanup(srv.Close)
 
 	return &client{t: t, server: srv, root: root, auth: service, aclEngi: engine, quota: quotaSvc}
@@ -1682,6 +1686,39 @@ func TestObjectStorageRefusesByteJobs(t *testing.T) {
 
 	if code, _ := objectGet(t, srv, token, "/api/v1/fs/checksum?path=/f.bin"); code != http.StatusServiceUnavailable {
 		t.Errorf("checksum without a worker = %d, want 503", code)
+	}
+}
+
+// covers the operator's switch over server-side downloads
+func TestURLFetchGate(t *testing.T) {
+	c := newClient(t)
+	c.setUp()
+
+	resp, raw := c.do(http.MethodPost, "/api/v1/fs/fetch", map[string]string{"url": "https://example.com/f"})
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("fetch with the switch off = %d: %s", resp.StatusCode, raw)
+	}
+	if got := decode[problem](t, raw); got.Code != api.CodeNotSupported {
+		t.Errorf("code = %q, want %q", got.Code, api.CodeNotSupported)
+	}
+
+	type configShape struct {
+		URLFetch bool `json:"url_fetch"`
+	}
+	_, raw = c.do(http.MethodGet, "/api/v1/config", nil)
+	if got := decode[configShape](t, raw); got.URLFetch {
+		t.Error("config says url_fetch is on with the switch off")
+	}
+
+	enabled := newClient(t, func(o *api.Options) { o.URLFetch = true })
+	enabled.setUp()
+	resp, raw = enabled.do(http.MethodPost, "/api/v1/fs/fetch", map[string]string{"url": "https://example.com/f"})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("fetch with the switch on = %d: %s", resp.StatusCode, raw)
+	}
+	_, raw = enabled.do(http.MethodGet, "/api/v1/config", nil)
+	if got := decode[configShape](t, raw); !got.URLFetch {
+		t.Error("config says url_fetch is off with the switch on")
 	}
 }
 
