@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Loader2 } from 'lucide-react'
 
 import { api, ApiError, type User } from './api'
 import { contentCache } from './lib/content-cache'
 import { SignIn } from './SignIn'
 import { Browser } from './Browser'
+import { CircleNotchIcon } from '@phosphor-icons/react'
 
 type State =
   | { phase: 'loading' }
@@ -67,7 +67,7 @@ export function App() {
     case 'loading':
       return (
         <div className="grid min-h-dvh place-items-center">
-          <Loader2 className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+          <CircleNotchIcon className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
         </div>
       )
     case 'setup':
