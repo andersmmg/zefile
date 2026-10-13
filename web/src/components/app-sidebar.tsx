@@ -12,6 +12,7 @@ import {
 } from '@phosphor-icons/react'
 
 import { formatSize, type Space, type User } from '@/api'
+import { storageGauge } from '@/lib/space'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -50,10 +51,8 @@ type Props = {
  */
 export function Sidebar({ user, space, section, create, canCreate, version, onHome, onTrash, onShared, onSharedWithMe, onMembers, onActivity, onSettings, onSignOut }: Props) {
   const inFiles = section === 'files'
-  const used = space ? Math.max(0, space.used) : 0
-  const quota = space ? Math.max(0, space.quota) : 0
-  const percent = space && quota > 0 ? Math.min(100, (used / quota) * 100) : 0
-  const overQuota = quota > 0 && used > quota
+  // Admins are shown the whole instance
+  const gauge = storageGauge(space, user.is_admin)
 
   return (
     // Duotone icons live only here, in the sidebar; the rest of the app uses
@@ -119,12 +118,20 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
       </nav>
 
       <div className="mt-auto flex flex-col gap-3 p-3">
-        {space && (
+        {gauge && space && (
           <div className="space-y-2 rounded-lg border bg-background/60 p-3">
-            <Progress value={percent} />
-            <p className={`text-xs ${overQuota ? 'font-medium text-destructive' : 'text-muted-foreground'}`}>
-              {quota > 0 ? `${formatSize(used)} of ${formatSize(quota)} used` : `${formatSize(used)} used`}
+            <Progress value={gauge.percent} />
+            <p className={`text-xs ${gauge.over ? 'font-medium text-destructive' : 'text-muted-foreground'}`}>
+              {gauge.total > 0
+                ? `${formatSize(gauge.used)} of ${formatSize(gauge.total)} used`
+                : `${formatSize(gauge.used)} used`}
             </p>
+            {gauge.own && (
+              <p className="text-xs text-muted-foreground">
+                You own {formatSize(gauge.own.used)}
+                {gauge.own.quota > 0 && ` of ${formatSize(gauge.own.quota)}`}
+              </p>
+            )}
             {space.read_only && (
               <p className="text-xs font-medium text-destructive">Read-only</p>
             )}
