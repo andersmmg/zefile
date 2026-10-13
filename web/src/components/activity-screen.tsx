@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import {
-  CircleNotch,
-  Key,
-  ShareNetwork,
-  SignIn,
-  SignOut,
-  Trash,
-  UserPlus,
-  UsersThree,
+  CircleNotchIcon,
+  KeyIcon,
+  ShareNetworkIcon,
+  SignInIcon,
+  SignOutIcon,
+  TrashIcon,
+  UserPlusIcon,
+  UsersThreeIcon,
   type Icon,
 } from '@phosphor-icons/react'
 
@@ -20,27 +20,27 @@ import { Button } from '@/components/ui/button'
 // Each action maps to a short human label and an icon. Unknown actions fall back
 // to their raw name, so a newer server never renders a blank row.
 const ACTIONS: Record<string, { label: string; icon: Icon }> = {
-  'auth.login': { label: 'signed in', icon: SignIn },
-  'auth.logout': { label: 'signed out', icon: SignOut },
-  'auth.setup': { label: 'set up the instance', icon: Key },
-  'auth.password_changed': { label: 'changed their password', icon: Key },
-  'user.joined': { label: 'joined', icon: UserPlus },
-  'user.updated': { label: 'updated an account', icon: UsersThree },
-  'user.deleted': { label: 'removed an account', icon: UsersThree },
-  'invitation.created': { label: 'invited someone', icon: UserPlus },
-  'invitation.revoked': { label: 'revoked an invitation', icon: UserPlus },
-  'share.created': { label: 'created a share', icon: ShareNetwork },
-  'share.revoked': { label: 'revoked a share', icon: ShareNetwork },
-  'access.granted': { label: 'granted access to', icon: Key },
-  'access.revoked': { label: 'revoked an access rule', icon: Key },
-  'group.created': { label: 'created a group', icon: UsersThree },
-  'group.deleted': { label: 'deleted a group', icon: UsersThree },
-  'group.member_added': { label: 'added a group member', icon: UsersThree },
-  'group.member_removed': { label: 'removed a group member', icon: UsersThree },
-  'file.trashed': { label: 'deleted', icon: Trash },
-  'trash.restored': { label: 'restored', icon: Trash },
-  'trash.purged': { label: 'purged an item from trash', icon: Trash },
-  'trash.emptied': { label: 'emptied the trash', icon: Trash },
+  'auth.login': { label: 'signed in', icon: SignInIcon },
+  'auth.logout': { label: 'signed out', icon: SignOutIcon },
+  'auth.setup': { label: 'set up the instance', icon: KeyIcon },
+  'auth.password_changed': { label: 'changed their password', icon: KeyIcon },
+  'user.joined': { label: 'joined', icon: UserPlusIcon },
+  'user.updated': { label: 'updated an account', icon: UsersThreeIcon },
+  'user.deleted': { label: 'removed an account', icon: UsersThreeIcon },
+  'invitation.created': { label: 'invited someone', icon: UserPlusIcon },
+  'invitation.revoked': { label: 'revoked an invitation', icon: UserPlusIcon },
+  'share.created': { label: 'created a share', icon: ShareNetworkIcon },
+  'share.revoked': { label: 'revoked a share', icon: ShareNetworkIcon },
+  'access.granted': { label: 'granted access to', icon: KeyIcon },
+  'access.revoked': { label: 'revoked an access rule', icon: KeyIcon },
+  'group.created': { label: 'created a group', icon: UsersThreeIcon },
+  'group.deleted': { label: 'deleted a group', icon: UsersThreeIcon },
+  'group.member_added': { label: 'added a group member', icon: UsersThreeIcon },
+  'group.member_removed': { label: 'removed a group member', icon: UsersThreeIcon },
+  'file.trashed': { label: 'deleted', icon: TrashIcon },
+  'trash.restored': { label: 'restored', icon: TrashIcon },
+  'trash.purged': { label: 'purged an item from trash', icon: TrashIcon },
+  'trash.emptied': { label: 'emptied the trash', icon: TrashIcon },
 }
 
 /**
@@ -94,7 +94,7 @@ export function ActivityScreen() {
       <div className="min-h-0 flex-1 overflow-auto">
         {loading ? (
           <div className="grid h-full place-items-center">
-            <CircleNotch className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+            <CircleNotchIcon className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
           </div>
         ) : entries.length === 0 ? (
           <Empty title="Nothing yet" detail="Actions on the instance will show up here." />
@@ -121,7 +121,7 @@ export function ActivityScreen() {
 
 function ActivityRow({ entry }: { entry: AuditEntry }) {
   const known = ACTIONS[entry.action]
-  const ActionIcon = known?.icon ?? Key
+  const ActionIcon = known?.icon ?? KeyIcon
   const label = known?.label ?? entry.action
 
   return (

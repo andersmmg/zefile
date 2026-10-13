@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { ArrowCounterClockwise, CircleNotch, Trash } from '@phosphor-icons/react'
+import { ArrowCounterClockwiseIcon, CircleNotchIcon, TrashIcon } from '@phosphor-icons/react'
 
 import { Empty } from '../App'
 import { api, ApiError, formatSize, type Entry, type TrashItem } from '@/api'
@@ -88,7 +88,7 @@ export function TrashScreen({ onChanged }: { onChanged: () => void }) {
           disabled={items.length === 0}
           onClick={() => setConfirm({ kind: 'empty' })}
         >
-          <Trash />
+          <TrashIcon />
           Empty trash
         </Button>
       </header>
@@ -96,7 +96,7 @@ export function TrashScreen({ onChanged }: { onChanged: () => void }) {
       <div className="min-h-0 flex-1 overflow-auto">
         {loading ? (
           <div className="grid h-full place-items-center">
-            <CircleNotch className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+            <CircleNotchIcon className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
           </div>
         ) : items.length === 0 ? (
           <Empty title="Trash is empty" detail="Trashed files land here, and can be put back until you empty it." />
@@ -157,7 +157,7 @@ function TrashRow({
 
       <div className="flex shrink-0 items-center gap-1">
         <Button variant="ghost" size="sm" onClick={onRestore}>
-          <ArrowCounterClockwise />
+          <ArrowCounterClockwiseIcon />
           Restore
         </Button>
         <Button
@@ -167,7 +167,7 @@ function TrashRow({
           aria-label={`Delete ${item.name} for good`}
           onClick={onPurge}
         >
-          <Trash />
+          <TrashIcon />
         </Button>
       </div>
     </div>

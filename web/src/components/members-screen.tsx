@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type SubmitEvent } from 'react'
 import { toast } from 'sonner'
 import {
-  Check,
-  CircleNotch,
-  Copy,
-  DotsThree,
-  EnvelopeSimple,
-  UserPlus,
+  CheckIcon,
+  CircleNotchIcon,
+  CopyIcon,
+  DotsThreeIcon,
+  EnvelopeSimpleIcon,
+  UserPlusIcon,
 } from '@phosphor-icons/react'
 
 import { Empty } from '../App'
@@ -101,7 +101,7 @@ export function MembersScreen({ me }: { me: User }) {
       <header className="flex h-14 shrink-0 items-center gap-3 border-b px-4">
         <h1 className="font-serif text-xl font-semibold tracking-tight">Members</h1>
         <Button className="ml-auto gap-2" size="sm" onClick={() => setInviting(true)}>
-          <UserPlus />
+          <UserPlusIcon />
           Invite
         </Button>
       </header>
@@ -109,7 +109,7 @@ export function MembersScreen({ me }: { me: User }) {
       <div className="min-h-0 flex-1 overflow-auto">
         {loading ? (
           <div className="grid h-full place-items-center">
-            <CircleNotch className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+            <CircleNotchIcon className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
           </div>
         ) : (
           <div className="mx-auto max-w-3xl p-4">
@@ -235,7 +235,7 @@ function UserRow({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Account actions">
-              <DotsThree weight="bold" />
+              <DotsThreeIcon weight="bold" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-44">
@@ -260,7 +260,7 @@ function UserRow({
 function InvitationRow({ invitation, onRevoke }: { invitation: Invitation; onRevoke: () => void }) {
   return (
     <div className="flex h-14 items-center gap-3 border-b border-border/60 px-4 last:border-b-0 hover:bg-accent/40">
-      <EnvelopeSimple className="size-5 shrink-0 text-muted-foreground" />
+      <EnvelopeSimpleIcon className="size-5 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">{invitation.email || 'Anyone with the link'}</p>
         <p className="truncate text-xs text-muted-foreground">
@@ -310,7 +310,7 @@ function QuotaDialog({
   const [value, setValue] = useState(user.quota_bytes > 0 ? formatSize(user.quota_bytes) : '')
   const [error, setError] = useState('')
 
-  function submit(e: FormEvent) {
+  function submit(e: SubmitEvent) {
     e.preventDefault()
     const n = parseBytesInput(value)
     if (n === null) {
@@ -368,7 +368,7 @@ function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [link, setLink] = useState('')
   const [copied, setCopied] = useState(false)
 
-  async function create(event: FormEvent) {
+  async function create(event: SubmitEvent) {
     event.preventDefault()
     setBusy(true)
     setErr('')
@@ -415,7 +415,7 @@ function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 className="font-mono text-xs"
               />
               <Button type="button" variant="secondary" className="shrink-0" onClick={copy}>
-                {copied ? <Check /> : <Copy />}
+                {copied ? <CheckIcon /> : <CopyIcon />}
                 Copy
               </Button>
             </div>

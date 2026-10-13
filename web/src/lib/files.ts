@@ -1,18 +1,18 @@
 import {
-  File,
-  FileAudio,
-  FileCode,
-  FileCsv,
-  FileDoc,
-  FileImage,
-  FilePdf,
-  FilePpt,
-  FileText,
-  FileVideo,
-  FileXls,
-  FileZip,
-  Folder,
-  UsersThree,
+  FileIcon,
+  FileAudioIcon,
+  FileCodeIcon,
+  FileCsvIcon,
+  FileDocIcon,
+  FileImageIcon,
+  FilePdfIcon,
+  FilePptIcon,
+  FileTextIcon,
+  FileVideoIcon,
+  FileXlsIcon,
+  FileZipIcon,
+  FolderIcon,
+  UsersThreeIcon,
   type Icon,
 } from '@phosphor-icons/react'
 
@@ -41,60 +41,60 @@ type Kind = { icon: Icon; color: string }
 // theme's semantic roles. Folders alone carry the brand — everything else is
 // read against them. The icons are Phosphor's duotone weight (set globally in
 // main.tsx), so each renders two-tone from a single colour.
-const FOLDER: Kind = { icon: Folder, color: 'text-primary' }
-const GENERIC: Kind = { icon: File, color: 'text-muted-foreground' }
-const MEMBERS: Kind = { icon: UsersThree, color: 'text-primary' }
+const FOLDER: Kind = { icon: FolderIcon, color: 'text-primary' }
+const GENERIC: Kind = { icon: FileIcon, color: 'text-muted-foreground' }
+const MEMBERS: Kind = { icon: UsersThreeIcon, color: 'text-primary' }
 
 const BY_EXTENSION: Record<string, Kind> = {
   // Documents
-  pdf: { icon: FilePdf, color: 'text-red-500' },
-  doc: { icon: FileDoc, color: 'text-blue-500' },
-  docx: { icon: FileDoc, color: 'text-blue-500' },
-  txt: { icon: FileText, color: 'text-muted-foreground' },
-  rtf: { icon: FileText, color: 'text-blue-500' },
+  pdf: { icon: FilePdfIcon, color: 'text-red-500' },
+  doc: { icon: FileDocIcon, color: 'text-blue-500' },
+  docx: { icon: FileDocIcon, color: 'text-blue-500' },
+  txt: { icon: FileTextIcon, color: 'text-muted-foreground' },
+  rtf: { icon: FileTextIcon, color: 'text-blue-500' },
   // Spreadsheets & data
-  xls: { icon: FileXls, color: 'text-emerald-600' },
-  xlsx: { icon: FileXls, color: 'text-emerald-600' },
-  csv: { icon: FileCsv, color: 'text-emerald-600' },
+  xls: { icon: FileXlsIcon, color: 'text-emerald-600' },
+  xlsx: { icon: FileXlsIcon, color: 'text-emerald-600' },
+  csv: { icon: FileCsvIcon, color: 'text-emerald-600' },
   // Presentations
-  ppt: { icon: FilePpt, color: 'text-orange-500' },
-  pptx: { icon: FilePpt, color: 'text-orange-500' },
+  ppt: { icon: FilePptIcon, color: 'text-orange-500' },
+  pptx: { icon: FilePptIcon, color: 'text-orange-500' },
   // Images
-  jpg: { icon: FileImage, color: 'text-violet-500' },
-  jpeg: { icon: FileImage, color: 'text-violet-500' },
-  png: { icon: FileImage, color: 'text-violet-500' },
-  gif: { icon: FileImage, color: 'text-violet-500' },
-  webp: { icon: FileImage, color: 'text-violet-500' },
-  svg: { icon: FileImage, color: 'text-violet-500' },
-  heic: { icon: FileImage, color: 'text-violet-500' },
+  jpg: { icon: FileImageIcon, color: 'text-violet-500' },
+  jpeg: { icon: FileImageIcon, color: 'text-violet-500' },
+  png: { icon: FileImageIcon, color: 'text-violet-500' },
+  gif: { icon: FileImageIcon, color: 'text-violet-500' },
+  webp: { icon: FileImageIcon, color: 'text-violet-500' },
+  svg: { icon: FileImageIcon, color: 'text-violet-500' },
+  heic: { icon: FileImageIcon, color: 'text-violet-500' },
   // Video
-  mp4: { icon: FileVideo, color: 'text-pink-500' },
-  mov: { icon: FileVideo, color: 'text-pink-500' },
-  mkv: { icon: FileVideo, color: 'text-pink-500' },
-  webm: { icon: FileVideo, color: 'text-pink-500' },
-  avi: { icon: FileVideo, color: 'text-pink-500' },
+  mp4: { icon: FileVideoIcon, color: 'text-pink-500' },
+  mov: { icon: FileVideoIcon, color: 'text-pink-500' },
+  mkv: { icon: FileVideoIcon, color: 'text-pink-500' },
+  webm: { icon: FileVideoIcon, color: 'text-pink-500' },
+  avi: { icon: FileVideoIcon, color: 'text-pink-500' },
   // Audio
-  mp3: { icon: FileAudio, color: 'text-amber-500' },
-  wav: { icon: FileAudio, color: 'text-amber-500' },
-  flac: { icon: FileAudio, color: 'text-amber-500' },
-  ogg: { icon: FileAudio, color: 'text-amber-500' },
-  m4a: { icon: FileAudio, color: 'text-amber-500' },
+  mp3: { icon: FileAudioIcon, color: 'text-amber-500' },
+  wav: { icon: FileAudioIcon, color: 'text-amber-500' },
+  flac: { icon: FileAudioIcon, color: 'text-amber-500' },
+  ogg: { icon: FileAudioIcon, color: 'text-amber-500' },
+  m4a: { icon: FileAudioIcon, color: 'text-amber-500' },
   // Archives
-  zip: { icon: FileZip, color: 'text-yellow-600' },
-  rar: { icon: FileZip, color: 'text-yellow-600' },
-  '7z': { icon: FileZip, color: 'text-yellow-600' },
-  tar: { icon: FileZip, color: 'text-yellow-600' },
-  gz: { icon: FileZip, color: 'text-yellow-600' },
+  zip: { icon: FileZipIcon, color: 'text-yellow-600' },
+  rar: { icon: FileZipIcon, color: 'text-yellow-600' },
+  '7z': { icon: FileZipIcon, color: 'text-yellow-600' },
+  tar: { icon: FileZipIcon, color: 'text-yellow-600' },
+  gz: { icon: FileZipIcon, color: 'text-yellow-600' },
   // Code
-  js: { icon: FileCode, color: 'text-cyan-500' },
-  ts: { icon: FileCode, color: 'text-cyan-500' },
-  tsx: { icon: FileCode, color: 'text-cyan-500' },
-  go: { icon: FileCode, color: 'text-cyan-500' },
-  py: { icon: FileCode, color: 'text-cyan-500' },
-  json: { icon: FileCode, color: 'text-cyan-500' },
-  html: { icon: FileCode, color: 'text-cyan-500' },
-  css: { icon: FileCode, color: 'text-cyan-500' },
-  md: { icon: FileCode, color: 'text-cyan-500' },
+  js: { icon: FileCodeIcon, color: 'text-cyan-500' },
+  ts: { icon: FileCodeIcon, color: 'text-cyan-500' },
+  tsx: { icon: FileCodeIcon, color: 'text-cyan-500' },
+  go: { icon: FileCodeIcon, color: 'text-cyan-500' },
+  py: { icon: FileCodeIcon, color: 'text-cyan-500' },
+  json: { icon: FileCodeIcon, color: 'text-cyan-500' },
+  html: { icon: FileCodeIcon, color: 'text-cyan-500' },
+  css: { icon: FileCodeIcon, color: 'text-cyan-500' },
+  md: { icon: FileCodeIcon, color: 'text-cyan-500' },
 }
 
 /** isMembersTop reports managed members structure. */

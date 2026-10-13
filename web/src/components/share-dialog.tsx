@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from 'react'
+import { useState, type SubmitEvent } from 'react'
 import { toast } from 'sonner'
-import { Check, Copy } from '@phosphor-icons/react'
+import { CheckIcon, CopyIcon } from '@phosphor-icons/react'
 
 import { api, ApiError, type Entry, type Share } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -43,7 +43,7 @@ export function ShareDialog({
   const [created, setCreated] = useState<Share | null>(null)
   const [copied, setCopied] = useState(false)
 
-  async function create(event: FormEvent) {
+  async function create(event: SubmitEvent) {
     event.preventDefault()
     setBusy(true)
     setErr('')
@@ -94,7 +94,7 @@ export function ShareDialog({
                 className="font-mono text-xs"
               />
               <Button type="button" variant="secondary" className="shrink-0" onClick={copy}>
-                {copied ? <Check /> : <Copy />}
+                {copied ? <CheckIcon /> : <CopyIcon />}
                 Copy
               </Button>
             </div>

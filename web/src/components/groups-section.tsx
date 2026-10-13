@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type SubmitEvent } from 'react'
 import { toast } from 'sonner'
-import { UsersThree } from '@phosphor-icons/react'
+import { UsersThreeIcon } from '@phosphor-icons/react'
 
 import { api, ApiError, type Group, type UserSummary } from '@/api'
 import { Button } from '@/components/ui/button'
@@ -51,7 +51,7 @@ export function GroupsSection({ users }: { users: UserSummary[] }) {
       <div className="mb-2 flex items-center gap-3 px-1">
         <h2 className="text-base font-semibold text-foreground">Groups</h2>
         <Button size="sm" variant="outline" className="ml-auto gap-2" onClick={() => setCreating(true)}>
-          <UsersThree />
+          <UsersThreeIcon />
           New group
         </Button>
       </div>
@@ -69,7 +69,7 @@ export function GroupsSection({ users }: { users: UserSummary[] }) {
               key={group.id}
               className="flex h-14 items-center gap-3 border-b border-border/60 px-4 last:border-b-0 hover:bg-accent/40"
             >
-              <UsersThree className="size-5 shrink-0 text-muted-foreground" />
+              <UsersThreeIcon className="size-5 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm">{group.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
@@ -119,7 +119,7 @@ function CreateGroupDialog({ onClose, onCreated }: { onClose: () => void; onCrea
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
 
-  async function create(event: FormEvent) {
+  async function create(event: SubmitEvent) {
     event.preventDefault()
     if (!name.trim()) {
       setErr('Choose a name.')

@@ -1,6 +1,6 @@
 import * as React from "react"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
-import { X as XIcon } from "@phosphor-icons/react"
+import { XIcon } from "@phosphor-icons/react"
 
 import { cn } from "@/lib/utils"
 

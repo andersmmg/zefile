@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type SubmitEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { CircleNotch, DeviceMobile, Monitor } from '@phosphor-icons/react'
+import { CircleNotchIcon, DeviceMobileIcon, MonitorIcon } from '@phosphor-icons/react'
 import { toDataURL } from 'qrcode'
 
 import { api, ApiError, formatSize, type SessionInfo, type Space, type User } from '@/api'
@@ -289,7 +289,7 @@ function PasswordSection() {
   const [errors, setErrors] = useState<FieldErrors>({})
   const [busy, setBusy] = useState(false)
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault()
     const found: FieldErrors = {}
     if (!current) found.current_password = 'Enter your current password.'
@@ -429,12 +429,12 @@ function SessionsSection({ onSignedOut }: { onSignedOut: () => void }) {
 
       {loading ? (
         <div className="grid place-items-center py-6">
-          <CircleNotch className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
+          <CircleNotchIcon className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
         </div>
       ) : (
         <ul className="divide-y rounded-md border">
           {sessions.map((session) => {
-            const Icon = isMobile(session.user_agent) ? DeviceMobile : Monitor
+            const Icon = isMobile(session.user_agent) ? DeviceMobileIcon : MonitorIcon
             return (
               <li key={session.id} className="flex items-center gap-3 px-3 py-2.5">
                 <Icon className="size-5 shrink-0 text-muted-foreground" />
@@ -498,7 +498,7 @@ function StorageSection() {
       </div>
       {!space ? (
         <div className="grid place-items-center py-6">
-          <CircleNotch className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
+          <CircleNotchIcon className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
         </div>
       ) : (
         <div className="flex h-14 items-center gap-3 rounded-lg border px-4">
@@ -558,7 +558,7 @@ function RetentionSection() {
       </div>
       {loading ? (
         <div className="grid place-items-center py-6">
-          <CircleNotch className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
+          <CircleNotchIcon className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
         </div>
       ) : (
         <div className="max-w-sm space-y-3">

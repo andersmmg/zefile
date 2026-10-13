@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { CaretLeft, CaretRight, CircleNotch, DownloadSimple, X } from '@phosphor-icons/react'
+import { CaretLeftIcon, CaretRightIcon, CircleNotchIcon, DownloadSimpleIcon, XIcon } from '@phosphor-icons/react'
 
 import { api, formatSize, type Entry } from '@/api'
 import { contentCache } from '@/lib/content-cache'
@@ -93,7 +93,7 @@ export function PreviewOverlay({
           className="text-white hover:bg-white/15 hover:text-white"
           onClick={() => onDownload(entry)}
         >
-          <DownloadSimple />
+          <DownloadSimpleIcon />
           Download
         </Button>
         <Button
@@ -103,7 +103,7 @@ export function PreviewOverlay({
           className="text-white hover:bg-white/15 hover:text-white"
           onClick={onClose}
         >
-          <X />
+          <XIcon />
         </Button>
       </div>
 
@@ -122,12 +122,12 @@ export function PreviewOverlay({
             <Fallback entry={entry} message="This file can't be previewed." onDownload={onDownload} />
           ) : asText ? (
             text === null ? (
-              <CircleNotch className="size-8 animate-spin text-white/70" aria-label="Loading" />
+              <CircleNotchIcon className="size-8 animate-spin text-white/70" aria-label="Loading" />
             ) : (
               <TextPreview data={text} />
             )
           ) : !url ? (
-            <CircleNotch className="size-8 animate-spin text-white/70" aria-label="Loading" />
+            <CircleNotchIcon className="size-8 animate-spin text-white/70" aria-label="Loading" />
           ) : isImage(entry) ? (
             <img
               src={url}
@@ -182,7 +182,7 @@ function TextPreview({ data }: { data: { content: string; truncated: boolean } }
           Showing the first 2 MB — download the file to see the rest.
         </p>
       )}
-      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-xs leading-relaxed">
+      <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap wrap-break-word p-4 font-mono text-xs leading-relaxed">
         {data.content || '(empty file)'}
       </pre>
     </div>
@@ -215,7 +215,7 @@ function NavArrow({ side, onClick }: { side: 'left' | 'right'; onClick: () => vo
         side === 'left' ? 'left-3' : 'right-3'
       }`}
     >
-      {side === 'left' ? <CaretLeft className="size-5" /> : <CaretRight className="size-5" />}
+      {side === 'left' ? <CaretLeftIcon className="size-5" /> : <CaretRightIcon className="size-5" />}
     </button>
   )
 }
@@ -238,7 +238,7 @@ function Fallback({
         <p className="mx-auto mt-1 max-w-xs text-sm text-muted-foreground">{message}</p>
       </div>
       <Button onClick={() => onDownload(entry)}>
-        <DownloadSimple />
+        <DownloadSimpleIcon />
         Download
       </Button>
     </div>

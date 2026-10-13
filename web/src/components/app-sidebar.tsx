@@ -1,14 +1,14 @@
 import {
-  CaretUpDown,
-  ClockCounterClockwise,
-  GearSix,
-  House,
+  CaretUpDownIcon,
+  ClockCounterClockwiseIcon,
+  GearSixIcon,
+  HouseIcon,
   IconContext,
-  ShareNetwork,
-  SignOut,
-  Trash,
-  TrayArrowDown,
-  UsersThree,
+  ShareNetworkIcon,
+  SignOutIcon,
+  TrashIcon,
+  TrayArrowDownIcon,
+  UsersThreeIcon,
 } from '@phosphor-icons/react'
 
 import { formatSize, type Space, type User } from '@/api'
@@ -77,7 +77,7 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
           className="justify-start gap-2"
           onClick={onHome}
         >
-          <House />
+          <HouseIcon />
           My files
         </Button>
         {!user.is_admin && (
@@ -86,7 +86,7 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
             className="justify-start gap-2"
             onClick={onSharedWithMe}
           >
-            <TrayArrowDown />
+            <TrayArrowDownIcon />
             Shared with me
           </Button>
         )}
@@ -95,7 +95,7 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
           className="justify-start gap-2"
           onClick={onShared}
         >
-          <ShareNetwork />
+          <ShareNetworkIcon />
           Shares
         </Button>
         <Button
@@ -103,7 +103,7 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
           className="justify-start gap-2"
           onClick={onTrash}
         >
-          <Trash />
+          <TrashIcon />
           Trash
         </Button>
         {user.is_admin && (
@@ -112,7 +112,7 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
             className="justify-start gap-2"
             onClick={onMembers}
           >
-            <UsersThree />
+            <UsersThreeIcon />
             Members
           </Button>
         )}
@@ -147,7 +147,7 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
                     {user.email || (user.is_admin ? 'Administrator' : 'Member')}
                   </p>
                 </div>
-                <CaretUpDown className="size-4 shrink-0 text-muted-foreground" />
+                <CaretUpDownIcon className="size-4 shrink-0 text-muted-foreground" />
               </button>
             </DropdownMenuTrigger>
 
@@ -169,24 +169,24 @@ export function Sidebar({ user, space, section, create, canCreate, version, onHo
 
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={onSettings}>
-                <GearSix />
+                <GearSixIcon />
                 Settings
               </DropdownMenuItem>
               {user.is_admin && (
                 <DropdownMenuItem onSelect={onMembers}>
-                  <UsersThree />
+                  <UsersThreeIcon />
                   Members
                 </DropdownMenuItem>
               )}
               {user.is_admin && (
                 <DropdownMenuItem onSelect={onActivity}>
-                  <ClockCounterClockwise />
+                  <ClockCounterClockwiseIcon />
                   Activity
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={onSignOut}>
-                <SignOut />
+                <SignOutIcon />
                 Log out
               </DropdownMenuItem>
             </DropdownMenuContent>

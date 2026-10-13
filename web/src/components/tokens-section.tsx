@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type SubmitEvent } from 'react'
 import { toast } from 'sonner'
-import { CircleNotch, Copy, Check, Key } from '@phosphor-icons/react'
+import { CircleNotchIcon, CopyIcon, CheckIcon, KeyIcon } from '@phosphor-icons/react'
 
 import { api, ApiError, type ApiToken } from '@/api'
 import { formatRelativeTime } from '@/lib/files'
@@ -93,7 +93,7 @@ export function TokensSection() {
 
       {loading ? (
         <div className="grid place-items-center py-6">
-          <CircleNotch className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
+          <CircleNotchIcon className="size-5 animate-spin text-muted-foreground" aria-label="Loading" />
         </div>
       ) : tokens.length === 0 ? (
         <p className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
@@ -103,7 +103,7 @@ export function TokensSection() {
         <ul className="divide-y rounded-md border">
           {tokens.map((token) => (
             <li key={token.id} className="flex items-center gap-3 px-3 py-2.5">
-              <Key className="size-5 shrink-0 text-muted-foreground" />
+              <KeyIcon className="size-5 shrink-0 text-muted-foreground" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{token.name}</p>
                 <p className="truncate text-xs text-muted-foreground">
@@ -177,7 +177,7 @@ function CreateTokenDialog({
   const [error, setError] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault()
     if (!name.trim()) {
       setError('Give the token a name so you can recognise it.')
@@ -280,7 +280,7 @@ function IssuedTokenDialog({ token, onClose }: { token: string; onClose: () => v
         <div className="flex items-center gap-2 rounded-md border bg-muted/40 p-2">
           <code className="min-w-0 flex-1 break-all font-mono text-xs">{token}</code>
           <Button size="sm" variant="outline" className="shrink-0" onClick={copy}>
-            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+            {copied ? <CheckIcon className="size-4" /> : <CopyIcon className="size-4" />}
             {copied ? 'Copied' : 'Copy'}
           </Button>
         </div>

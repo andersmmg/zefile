@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { CircleNotch, LockSimple } from '@phosphor-icons/react'
+import { CircleNotchIcon, LockSimpleIcon } from '@phosphor-icons/react'
 
 import { Empty } from '../App'
 import { api, ApiError, type Entry, type Share, type User } from '@/api'
@@ -62,7 +62,7 @@ export function SharesScreen({
       <div className="min-h-0 flex-1 overflow-auto">
         {loading ? (
           <div className="grid h-full place-items-center">
-            <CircleNotch className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
+            <CircleNotchIcon className="size-6 animate-spin text-muted-foreground" aria-label="Loading" />
           </div>
         ) : mode === 'incoming' ? (
           incoming.length === 0 ? (
@@ -117,7 +117,7 @@ function ShareRow({ share, onRevoke }: { share: Share; onRevoke: () => void }) {
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-1.5 truncate text-sm">
           {share.has_password && (
-            <LockSimple className="size-3.5 shrink-0 text-muted-foreground" aria-label="Password-protected" />
+            <LockSimpleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Password-protected" />
           )}
           <span className="truncate">{share.name}</span>
         </p>

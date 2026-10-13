@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Moon, Sun } from '@phosphor-icons/react'
+import { MoonIcon, SunIcon } from '@phosphor-icons/react'
 
 import { Button } from '@/components/ui/button'
 import { currentTheme, setTheme } from '@/lib/theme'
@@ -30,7 +30,7 @@ export function ThemeToggle({ className }: { className?: string }) {
       title={dark ? 'Switch to light theme' : 'Switch to dark theme'}
       onClick={toggle}
     >
-      {dark ? <Sun /> : <Moon />}
+      {dark ? <SunIcon /> : <MoonIcon />}
     </Button>
   )
 }
