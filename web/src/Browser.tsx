@@ -2439,7 +2439,7 @@ function ListRow({
               />
             ) : (
               <span className="truncate text-sm" title={entry.name}>
-                {shortName(entry.name)}
+                  {entry.name}
               </span>
             )}
             {shared && (
