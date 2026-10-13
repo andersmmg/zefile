@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { CaretLeft, CaretRight, CircleNotch, DownloadSimple, X } from '@phosphor-icons/react'
 
 import { api, formatSize, type Entry } from '@/api'
+import { contentCache } from '@/lib/content-cache'
 import { entryKind, isAudio, isImage, isPdf, isPreviewable, isText, isVideo } from '@/lib/files'
 import { Button } from '@/components/ui/button'
 
@@ -20,6 +21,7 @@ export function PreviewOverlay({
   entry,
   siblings,
   inlinePreview,
+  objectStorage,
   onNavigate,
   onClose,
   onDownload,
@@ -27,6 +29,7 @@ export function PreviewOverlay({
   entry: Entry
   siblings: Entry[]
   inlinePreview: boolean
+  objectStorage: boolean
   onNavigate: (entry: Entry) => void
   onClose: () => void
   onDownload: (entry: Entry) => void
@@ -46,16 +49,18 @@ export function PreviewOverlay({
 
     // Text is read same-origin and size-capped; anything else previewable is
     // a signed link the browser's own handling streams. Files with no inline
-    // preview need no link at all.
+    // preview need no link at all. Both go through the content cache, so
+    // stepping back and forth between files shows a file already previewed
+    // without touching the network at all (see lib/content-cache).
     if (asText) {
-      api
-        .fileText(entry.path)
+      contentCache
+        .cachedText(entry, () => api.fileText(entry.path))
         .then((t) => alive && setText(t))
         .catch(() => alive && setFailed(true))
     } else if (previewable) {
-      api
-        .downloadLink(entry.path)
-        .then(({ url }) => alive && setUrl(url))
+      contentCache
+        .cachedMediaUrl(entry, () => api.downloadLink(entry.path), !isVideo(entry) && !objectStorage)
+        .then((u) => alive && setUrl(u))
         .catch(() => alive && setFailed(true))
     }
     return () => {

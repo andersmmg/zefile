@@ -374,7 +374,8 @@ export const api = {
       `/api/v1/fs/text?path=${encodeURIComponent(path)}`,
     ),
 
-  config: () => request<{ inline_preview: boolean; version: string }>('/api/v1/config'),
+  config: () =>
+    request<{ inline_preview: boolean; object_storage: boolean; version: string }>('/api/v1/config'),
 
   createShare: (path: string, opts: { expires_in_hours?: number; password?: string } = {}) =>
     request<Share>('/api/v1/shares', {

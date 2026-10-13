@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Loader2 } from 'lucide-react'
 
 import { api, ApiError, type User } from './api'
+import { contentCache } from './lib/content-cache'
 import { SignIn } from './SignIn'
 import { Browser } from './Browser'
 
@@ -24,6 +25,10 @@ export function App() {
   // account at all, and are we already signed in. Asking the second first
   // would show a sign-in form on an instance nobody can sign in to yet.
   const resolve = useCallback(async () => {
+    const signOut = () => {
+      contentCache.clear()
+      setState({ phase: 'signed-out' })
+    }
     // An invite link is its own entry point: it creates an account, so it comes
     // before the is-there-an-account and are-we-signed-in questions.
     if (onInviteRoute()) {
@@ -40,10 +45,10 @@ export function App() {
       setState({ phase: 'ready', user })
     } catch (err) {
       if (err instanceof ApiError && err.problem.status === 401) {
-        setState({ phase: 'signed-out' })
+        signOut()
         return
       }
-      setState({ phase: 'signed-out' })
+      signOut()
     }
   }, [])
 

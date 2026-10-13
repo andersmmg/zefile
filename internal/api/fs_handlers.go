@@ -655,12 +655,15 @@ func (s *Server) handleSpace(w http.ResponseWriter, r *http.Request) {
 type configResponse struct {
 	InlinePreview bool `json:"inline_preview"`
 
+	ObjectStorage bool `json:"object_storage"`
+
 	Version string `json:"version"`
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, configResponse{
 		InlinePreview: !s.singleOrigin || s.objectStorage,
+		ObjectStorage: s.objectStorage,
 		Version:       s.version,
 	})
 }

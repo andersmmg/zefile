@@ -131,6 +131,11 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 			s.writeError(w, r, err)
 			return
 		}
+		// The redirect itself must never be remembered: a browser that
+		// cached it would keep replaying the capability URL long past its
+		// expiry, and a *stable* redirect target is what lets its HTTP
+		// cache the bytes this points at!
+		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}
@@ -348,6 +353,8 @@ func (s *Server) serveShareFile(w http.ResponseWriter, r *http.Request, ctx cont
 			s.writeError(w, r, err)
 			return
 		}
+		// Not cacheable, for the same reason as in handleDownload.
+		w.Header().Set("Cache-Control", "no-store")
 		http.Redirect(w, r, url, http.StatusFound)
 		return
 	}

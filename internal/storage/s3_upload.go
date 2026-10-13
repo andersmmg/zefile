@@ -254,11 +254,23 @@ func (s *S3) AbortUpload(ctx context.Context, h UploadHandle) error {
 // PresignGet implements [Presigner]. The object is looked up first so a
 // missing file fails under the stable error mapping. disposition is a
 // per-request Content-Disposition override ("" keeps the stored one).
+//
+// Repeated requests for the same object share one URL until it nears its
+// expiry: the redirect the browser follows then lands on a byte-identical
+// target every time, which is what lets its HTTP cache answer a repeated
+// preview instead of redownloading the file (see [presignCache]).
 func (s *S3) PresignGet(ctx context.Context, p Path, head bool, ttl time.Duration, disposition string) (string, error) {
 	if err := authorize(ctx, s.guard, OpRead, p); err != nil {
 		return "", err
 	}
 	key := s.key(p)
+	if ttl <= 0 {
+		ttl = s.presignTTL
+	}
+	cacheKey := s.presignCacheKey(key, head, ttl, disposition)
+	if url, ok := s.presigns.get(cacheKey); ok {
+		return url, nil
+	}
 	out, err := s.head(ctx, key)
 	if err != nil {
 		return "", err
@@ -266,29 +278,45 @@ func (s *S3) PresignGet(ctx context.Context, p Path, head bool, ttl time.Duratio
 	if out == nil {
 		return "", ErrNotExist
 	}
-	if ttl <= 0 {
-		ttl = s.presignTTL
-	}
+	var reqURL string
 	if head {
 		in := &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}
 		if disposition != "" {
 			in.ResponseContentDisposition = aws.String(disposition)
 		}
+		in.ResponseCacheControl = aws.String(presignCacheControl)
 		req, err := s.signer().PresignHeadObject(ctx, in, awss3.WithPresignExpires(ttl))
 		if err != nil {
 			return "", fmt.Errorf("storage: s3 presign: %w", err)
 		}
-		return req.URL, nil
+		reqURL = req.URL
+	} else {
+		in := &awss3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}
+		if disposition != "" {
+			in.ResponseContentDisposition = aws.String(disposition)
+		}
+		in.ResponseCacheControl = aws.String(presignCacheControl)
+		req, err := s.signer().PresignGetObject(ctx, in, awss3.WithPresignExpires(ttl))
+		if err != nil {
+			return "", fmt.Errorf("storage: s3 presign: %w", err)
+		}
+		reqURL = req.URL
 	}
-	in := &awss3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}
-	if disposition != "" {
-		in.ResponseContentDisposition = aws.String(disposition)
+	if ttl > presignReuseMargin {
+		s.presigns.put(cacheKey, reqURL, time.Now().Add(ttl-presignReuseMargin))
 	}
-	req, err := s.signer().PresignGetObject(ctx, in, awss3.WithPresignExpires(ttl))
-	if err != nil {
-		return "", fmt.Errorf("storage: s3 presign: %w", err)
+	return reqURL, nil
+}
+
+// presignCacheKey names one capability URL's shape: the same key, method,
+// TTL and disposition always presign to the same URL string, so any of them
+// changing must mint its own.
+func (s *S3) presignCacheKey(key string, head bool, ttl time.Duration, disposition string) string {
+	method := "GET"
+	if head {
+		method = "HEAD"
 	}
-	return req.URL, nil
+	return method + "\x00" + key + "\x00" + ttl.String() + "\x00" + disposition
 }
 
 // listParts returns every part storage holds for an upload.

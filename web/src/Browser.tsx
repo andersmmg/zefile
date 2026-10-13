@@ -320,6 +320,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const [renaming, setRenaming] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
   const [inlinePreview, setInlinePreview] = useState(false)
+  const [objectStorage, setObjectStorage] = useState(false)
   const [version, setVersion] = useState('')
   const [sharedPaths, setSharedPaths] = useState<Set<string>>(() => new Set())
   const [clipboard, setClipboard] = useState<Clipboard | null>(null)
@@ -496,6 +497,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       .config()
       .then((c) => {
         setInlinePreview(c.inline_preview)
+        setObjectStorage(c.object_storage)
         setVersion(c.version)
       })
       .catch(() => undefined)
@@ -1613,6 +1615,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
 
       {preview && (
         <PreviewOverlay
+          objectStorage={objectStorage}
           entry={preview}
           siblings={previewSiblings}
           inlinePreview={inlinePreview}

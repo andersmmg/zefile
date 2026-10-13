@@ -82,6 +82,10 @@ type S3 struct {
 	partSize   int64
 	presignTTL time.Duration
 	meta       MetaCache // nil means uncached
+	// presigns reuses capability URLs within their validity window so
+	// redirects to the store stay stable and the browser's HTTP cache can
+	// answer repeated previews. See [presignCache].
+	presigns presignCache
 }
 
 var _ FS = (*S3)(nil)
