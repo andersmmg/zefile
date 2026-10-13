@@ -151,6 +151,10 @@ type Presigner interface {
 	PresignGet(ctx context.Context, p Path, head bool, ttl time.Duration, disposition string) (string, error)
 }
 
+type ChecksumStore interface {
+	ObjectChecksum(ctx context.Context, p Path) (string, error)
+}
+
 // The As* helpers adapt a backend to the capability a caller needs,
 // returning a refusal answering [ErrNotSupported] when it lacks one.
 func AsStager(fs FS) Stager {

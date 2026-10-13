@@ -10,7 +10,7 @@ import (
 )
 
 const getChecksum = `-- name: GetChecksum :one
-SELECT path, algo, hash, size, modified_at, computed_at FROM checksums WHERE path = ?
+SELECT path, algo, hash, size, modified_at, computed_at, source FROM checksums WHERE path = ?
 `
 
 func (q *Queries) GetChecksum(ctx context.Context, path string) (Checksum, error) {
@@ -23,16 +23,18 @@ func (q *Queries) GetChecksum(ctx context.Context, path string) (Checksum, error
 		&i.Size,
 		&i.ModifiedAt,
 		&i.ComputedAt,
+		&i.Source,
 	)
 	return i, err
 }
 
 const upsertChecksum = `-- name: UpsertChecksum :exec
-INSERT INTO checksums (path, algo, hash, size, modified_at, computed_at)
-VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO checksums (path, algo, hash, size, modified_at, computed_at, source)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(path) DO UPDATE SET
     algo = excluded.algo, hash = excluded.hash, size = excluded.size,
-    modified_at = excluded.modified_at, computed_at = excluded.computed_at
+    modified_at = excluded.modified_at, computed_at = excluded.computed_at,
+    source = excluded.source
 `
 
 type UpsertChecksumParams struct {
@@ -42,6 +44,7 @@ type UpsertChecksumParams struct {
 	Size       int64
 	ModifiedAt int64
 	ComputedAt int64
+	Source     string
 }
 
 func (q *Queries) UpsertChecksum(ctx context.Context, arg UpsertChecksumParams) error {
@@ -52,6 +55,7 @@ func (q *Queries) UpsertChecksum(ctx context.Context, arg UpsertChecksumParams) 
 		arg.Size,
 		arg.ModifiedAt,
 		arg.ComputedAt,
+		arg.Source,
 	)
 	return err
 }

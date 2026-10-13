@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/krishna2206/zefile/internal/db"
@@ -24,6 +25,13 @@ import (
 // Algorithm is the only digest offered.
 const Algorithm = "sha256"
 
+// Where a digest came from
+const (
+	SourceCompute = "compute" // this server hashed the bytes
+	SourceStore   = "store"   // the object store holds the whole-object value
+	SourceClient  = "client"  // the browser's claim; unverified here
+)
+
 // Payload is the background-job request. The caller is recorded so the worker
 // reads the file with the same authority, honouring the permission model.
 type Payload struct {
@@ -32,13 +40,14 @@ type Payload struct {
 	IsAdmin bool   `json:"is_admin"`
 }
 
-// Checksum is a computed digest of a file.
+// Checksum and source
 type Checksum struct {
 	Path       string    `json:"path"`
 	Algorithm  string    `json:"algorithm"`
 	Hash       string    `json:"hash"`
 	Size       int64     `json:"size"`
 	ComputedAt time.Time `json:"computed_at"`
+	Source     string    `json:"source"`
 }
 
 // Service computes and caches checksums.
@@ -114,6 +123,7 @@ func (s *Service) Compute(ctx context.Context, p storage.Path) (Checksum, error)
 		Size:       info.Size,
 		ModifiedAt: info.ModTime.Unix(),
 		ComputedAt: s.now().Unix(),
+		Source:     SourceCompute,
 	}); err != nil {
 		return Checksum{}, fmt.Errorf("checksum: store: %w", err)
 	}
@@ -123,7 +133,97 @@ func (s *Service) Compute(ctx context.Context, p storage.Path) (Checksum, error)
 		Hash:       sum,
 		Size:       info.Size,
 		ComputedAt: s.now().UTC(),
+		Source:     SourceCompute,
 	}, nil
+}
+
+// ValidHash reports whether s is a lowercase SHA-256 hex digest.
+func ValidHash(s string) bool {
+	if len(s) != 2*sha256.Size {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Service) StoreClaim(ctx context.Context, p storage.Path, hash string) (Checksum, error) {
+	if !ValidHash(hash) {
+		return Checksum{}, fmt.Errorf("checksum: claim is not a sha256 hex digest")
+	}
+	info, err := s.fs.Stat(ctx, p)
+	if err != nil {
+		return Checksum{}, err
+	}
+	if info.IsDir {
+		return Checksum{}, storage.ErrIsDir
+	}
+	if err := s.writes.UpsertChecksum(ctx, sqlcgen.UpsertChecksumParams{
+		Path:       p.String(),
+		Algo:       Algorithm,
+		Hash:       hash,
+		Size:       info.Size,
+		ModifiedAt: info.ModTime.Unix(),
+		ComputedAt: s.now().Unix(),
+		Source:     SourceClient,
+	}); err != nil {
+		return Checksum{}, fmt.Errorf("checksum: store claim: %w", err)
+	}
+	return Checksum{
+		Path:       p.String(),
+		Algorithm:  Algorithm,
+		Hash:       hash,
+		Size:       info.Size,
+		ComputedAt: s.now().UTC(),
+		Source:     SourceClient,
+	}, nil
+}
+
+func (s *Service) FromStore(ctx context.Context, p storage.Path) (Checksum, bool, error) {
+	store, ok := s.fs.(storage.ChecksumStore)
+	if !ok {
+		slog.WarnContext(ctx, "checksum: storage backend offers no stored checksums",
+			"path", p.String())
+		return Checksum{}, false, nil
+	}
+	info, err := s.fs.Stat(ctx, p)
+	if err != nil {
+		return Checksum{}, false, err
+	}
+	if info.IsDir {
+		return Checksum{}, false, storage.ErrIsDir
+	}
+
+	sum, err := store.ObjectChecksum(ctx, p)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotSupported) {
+			return Checksum{}, false, nil
+		}
+		return Checksum{}, false, fmt.Errorf("checksum: store: %w", err)
+	}
+	if err := s.writes.UpsertChecksum(ctx, sqlcgen.UpsertChecksumParams{
+		Path:       p.String(),
+		Algo:       Algorithm,
+		Hash:       sum,
+		Size:       info.Size,
+		ModifiedAt: info.ModTime.Unix(),
+		ComputedAt: s.now().Unix(),
+		Source:     SourceStore,
+	}); err != nil {
+		return Checksum{}, false, fmt.Errorf("checksum: store: %w", err)
+	}
+	return Checksum{
+		Path:       p.String(),
+		Algorithm:  Algorithm,
+		Hash:       sum,
+		Size:       info.Size,
+		ComputedAt: s.now().UTC(),
+		Source:     SourceStore,
+	}, true, nil
 }
 
 func toChecksum(row sqlcgen.Checksum) Checksum {
@@ -133,5 +233,6 @@ func toChecksum(row sqlcgen.Checksum) Checksum {
 		Hash:       row.Hash,
 		Size:       row.Size,
 		ComputedAt: time.Unix(row.ComputedAt, 0).UTC(),
+		Source:     row.Source,
 	}
 }

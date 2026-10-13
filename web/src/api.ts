@@ -34,7 +34,16 @@ export type Share = {
  *  a fraction in [0,1]. */
 export type Retention = { audit_days: number; trash_days: number }
 
-export type Checksum = { path: string; algorithm: string; hash: string; size: number; computed_at: string }
+export type Checksum = {
+  path: string
+  algorithm: string
+  hash: string
+  size: number
+  computed_at: string
+  /** Where the digest came from: 'compute' (the server hashed it), 'store'
+   *  (the object store holds it), or 'client' (the browser's claim). */
+  source: string
+}
 
 export type Job = {
   id: number

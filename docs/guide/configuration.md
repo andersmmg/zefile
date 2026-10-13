@@ -51,7 +51,8 @@ server to read file bytes behave as follows:
 | Browse, upload, download, trash, move, copy | ✓ | ✓ |
 | Text preview | ✓ | ✓, bounded read |
 | Thumbnails | ✓ | not generated (icons instead) |
-| Fetch URL to server, unzip, checksum verify | ✓ | refused |
+| Fetch URL to server, unzip | ✓ | refused |
+| Checksum (SHA-256) | ✓ | ✓, from the browser at upload time or the store's own value; computed once in the background otherwise |
 
 The full list, with defaults and validation rules, is in the
 [Environment variables reference](/reference/environment).

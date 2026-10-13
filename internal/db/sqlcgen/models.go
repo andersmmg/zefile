@@ -49,6 +49,7 @@ type Checksum struct {
 	Size       int64
 	ModifiedAt int64
 	ComputedAt int64
+	Source     string
 }
 
 type EntryColor struct {

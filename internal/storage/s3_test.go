@@ -2,6 +2,8 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -27,9 +29,10 @@ import (
 var stubModTime = time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 
 type stubObject struct {
-	size    int64
-	modTime time.Time
-	body    []byte
+	size           int64
+	modTime        time.Time
+	body           []byte
+	checksumSHA256 string
 }
 
 // stubUpload is one in-progress multipart upload: the destination key and
@@ -117,7 +120,7 @@ func (s *stubS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		delete(s.objects, key)
 		w.WriteHeader(http.StatusNoContent)
 	case r.Method == http.MethodHead:
-		s.headObject(w, key)
+		s.headObject(w, r, key)
 	case r.Method == http.MethodGet && q.Has("list-type"):
 		s.list(w, r)
 	case r.Method == http.MethodGet:
@@ -129,7 +132,7 @@ func (s *stubS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *stubS3) headObject(w http.ResponseWriter, key string) {
+func (s *stubS3) headObject(w http.ResponseWriter, r *http.Request, key string) {
 	obj, ok := s.objects[key]
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
@@ -137,6 +140,10 @@ func (s *stubS3) headObject(w http.ResponseWriter, key string) {
 	}
 	w.Header().Set("Content-Length", strconv.FormatInt(obj.size, 10))
 	w.Header().Set("Last-Modified", obj.modTime.Format(http.TimeFormat))
+	if obj.checksumSHA256 != "" && r.Header.Get("x-amz-checksum-mode") == "ENABLED" {
+		w.Header().Set("x-amz-checksum-sha256", obj.checksumSHA256)
+		w.Header().Set("x-amz-checksum-type", "FULL_OBJECT")
+	}
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -214,7 +221,14 @@ func (s *stubS3) putObject(w http.ResponseWriter, r *http.Request, key string) {
 	if s.violations != nil && len(body) > 0 && !isPresigned(r) {
 		*s.violations = append(*s.violations, "signed PUT "+key)
 	}
-	s.objects[key] = stubObject{size: int64(len(body)), modTime: stubModTime, body: body}
+	obj := stubObject{size: int64(len(body)), modTime: stubModTime, body: body}
+	if v := r.Header.Get("x-amz-checksum-sha256"); v != "" {
+		obj.checksumSHA256 = v
+	} else if r.Header.Get("x-amz-checksum-algorithm") == "SHA256" {
+		sum := sha256.Sum256(body)
+		obj.checksumSHA256 = base64.StdEncoding.EncodeToString(sum[:])
+	}
+	s.objects[key] = obj
 	// Echo a flexible checksum if the SDK sent one, as providers do.
 	if v := r.Header.Get("x-amz-checksum-crc32"); v != "" {
 		w.Header().Set("x-amz-checksum-crc32", v)
@@ -353,6 +367,11 @@ func (s *stubS3) copyObject(w http.ResponseWriter, r *http.Request, key string) 
 	if !ok {
 		writeS3Error(w, http.StatusNotFound, "NoSuchKey", "the source does not exist")
 		return
+	}
+	// The source's checksum rides along by default
+	if r.Header.Get("x-amz-checksum-algorithm") == "SHA256" {
+		sum := sha256.Sum256(obj.body)
+		obj.checksumSHA256 = base64.StdEncoding.EncodeToString(sum[:])
 	}
 	s.objects[key] = obj
 	writeXML(w, struct {

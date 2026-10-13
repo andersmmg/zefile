@@ -73,7 +73,9 @@ export async function uploadFile(
     part_size?: number
   } | null
   if (session?.mode === 'direct' && Number(session.part_size) > 0) {
-    await uploadDirect(file, location, Number(session.part_size), onProgress, signal, parallelism)
+    // The browser hashes the file while it streams out
+    const claim = hashFile(file, signal).catch(() => undefined)
+    await uploadDirect(file, location, Number(session.part_size), onProgress, signal, parallelism, claim)
     return
   }
 
@@ -180,15 +182,35 @@ function makeReporter(onProgress: (sent: number, speed: number) => void) {
  *  refill the window a few parts ahead. */
 const partBatch = 8
 
-/** defaultParallelism caps concurrent part PUTs. One stream rarely fills an
- *  uplink to object storage — B2's own CLI defaults to ten threads — while
- *  browsers allow about six connections per origin, so four is the sweet
- *  spot: several times the throughput without starving the page. */
+/** hashFile computes a file's SHA-256 in a background worker while the upload
+ *  streams. The hash is sent as a client claim; if hashing fails or is aborted,
+ *  the upload still completes without it. */
+function hashFile(file: Blob, signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./lib/hash-worker', import.meta.url), { type: 'module' })
+    const finish = (settle: () => void) => {
+      worker.terminate()
+      signal?.removeEventListener('abort', onAbort)
+      settle()
+    }
+    const onAbort = () => finish(() => reject(new DOMException('aborted', 'AbortError')))
+    signal?.addEventListener('abort', onAbort, { once: true })
+    worker.onmessage = (event: MessageEvent) => {
+      const data = event.data as { hash?: string; error?: string }
+      const hash = data.hash
+      if (typeof hash === 'string') finish(() => resolve(hash))
+      else finish(() => reject(new Error(data.error || 'hashing failed')))
+    }
+    worker.onerror = (event) => {
+      finish(() => reject(new Error(event.message || 'the hash worker failed')))
+    }
+    worker.postMessage(file)
+  })
+}
+
+/** defaultParallelism caps concurrent part PUTs. */
 export const defaultParallelism = 4
 
-/** DirectDeps bundles uploadDirectParts' network surface so tests can drive
- *  the concurrent path — out-of-order completion, aborts, retries — without
- *  a server or storage. */
 export type DirectDeps = {
   partURLs: (session: string, parts: number[], signal?: AbortSignal) => Promise<Map<number, string>>
   putPart: (
@@ -198,15 +220,10 @@ export type DirectDeps = {
     signal?: AbortSignal,
   ) => Promise<void>
   currentOffset: (session: string, signal?: AbortSignal) => Promise<number>
-  completeSession: (session: string, signal?: AbortSignal) => Promise<void>
+  completeSession: (session: string, signal?: AbortSignal, claim?: string) => Promise<void>
 }
 
-/** runPool runs tasks with at most `limit` in flight. Results keep task
- *  order. A failure stops starting new tasks and the first error wins once
- *  the in-flight ones settle — every promise is observed, so nothing rejects
- *  unhandled, and parts that landed stay landed for resume. Tasks must
- *  observe `signal`: the pool waits for in-flight tasks before reporting an
- *  abort. Exported for tests. */
+/** runPool runs tasks with at most `limit` in flight, results in task order; Exported for tests. */
 export async function runPool<T>(
   tasks: (() => Promise<T>)[],
   limit: number,
@@ -295,13 +312,24 @@ async function uploadDirect(
   onProgress: (sent: number, speed: number) => void,
   signal?: AbortSignal,
   parallelism = defaultParallelism,
+  claim?: Promise<string | undefined>,
 ): Promise<void> {
-  await uploadDirectParts(file, session, partSize, onProgress, signal, parallelism, {
-    partURLs,
-    putPart,
-    currentOffset,
-    completeSession,
-  })
+  await uploadDirectParts(
+    file,
+    session,
+    partSize,
+    onProgress,
+    signal,
+    parallelism,
+    {
+      partURLs,
+      putPart,
+      currentOffset,
+      completeSession,
+    },
+    undefined,
+    claim,
+  )
 }
 
 /** uploadDirectParts is uploadDirect with injectable network, so tests can
@@ -315,13 +343,14 @@ export async function uploadDirectParts(
   parallelism: number,
   deps: DirectDeps,
   retry?: { tries: number; baseMs: number },
+  claim?: Promise<string | undefined>,
 ): Promise<void> {
   const report = makeReporter(onProgress)
   const totalParts = Math.ceil(file.size / partSize)
 
   // An empty file has no parts: completing publishes the empty object.
   if (totalParts === 0) {
-    await deps.completeSession(session, signal)
+    await deps.completeSession(session, signal, await claim)
     report(0, true)
     return
   }
@@ -376,7 +405,7 @@ export async function uploadDirectParts(
     report(done, true)
   }
 
-  await deps.completeSession(session, signal)
+  await deps.completeSession(session, signal, await claim)
   report(file.size, true)
 }
 
@@ -394,11 +423,15 @@ async function partURLs(session: string, parts: number[], signal?: AbortSignal):
   return new Map(body.parts.map((p) => [p.number, p.url]))
 }
 
-/** completeSession publishes the upload once storage holds every byte. */
-async function completeSession(session: string, signal?: AbortSignal): Promise<void> {
+/** completeSession publishes the upload once storage holds every byte. A
+ *  claim rides along when the caller hashed the file: the server stores it
+ *  labelled as the browser's own, since these bytes never passed through. */
+async function completeSession(session: string, signal?: AbortSignal, claim?: string): Promise<void> {
   const response = await fetch(`${session}/complete`, {
     method: 'POST',
     credentials: 'same-origin',
+    headers: claim ? { 'Content-Type': 'application/json' } : undefined,
+    body: claim ? JSON.stringify({ checksum: { algorithm: 'sha256', hash: claim } }) : undefined,
     signal,
   })
   if (!response.ok) throw new Error(await describeFailure(response))

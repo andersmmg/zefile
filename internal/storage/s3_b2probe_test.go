@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"os"
@@ -404,4 +405,166 @@ func TestS3B2ProbeServerSideCopy(t *testing.T) {
 		return
 	}
 	t.Logf("UploadPartCopy + complete: OK")
+}
+
+func TestS3B2ProbeObjectChecksum(t *testing.T) {
+	p := newB2Probe(t)
+	ctx := p.ctx()
+	s := p.backend
+	body := []byte("zefile whole-object checksum probe")
+	sum := sha256.Sum256(body)
+	wantB64 := base64.StdEncoding.EncodeToString(sum[:])
+	wantHex := hex.EncodeToString(sum[:])
+
+	// §9.6a: PutObject with the algorithm — accepted, stored, returned.
+	k := "zefile-b2probe/sum/put.bin"
+	_, err := s.client.PutObject(ctx, &awss3.PutObjectInput{
+		Bucket: aws.String(p.bucket), Key: aws.String(k),
+		Body: bytes.NewReader(body), ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+	})
+	if err != nil {
+		t.Errorf("§9.6 PutObject with ChecksumAlgorithm=SHA256: %v", err)
+	} else {
+		out, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{
+			Bucket: aws.String(p.bucket), Key: aws.String(k), ChecksumMode: types.ChecksumModeEnabled,
+		})
+		if err != nil {
+			t.Errorf("§9.6 HeadObject with ChecksumMode: %v", err)
+		} else if got := aws.ToString(out.ChecksumSHA256); got != wantB64 {
+			t.Errorf("§9.6 stored checksum = %q, want %q", got, wantB64)
+		} else {
+			t.Logf("§9.6 PutObject checksum stored and returned: OK")
+		}
+	}
+	k2 := p.key(t, "sum/copied.bin", body)
+	_, err = s.client.CopyObject(ctx, &awss3.CopyObjectInput{
+		Bucket: aws.String(p.bucket), Key: aws.String(k2),
+		CopySource:        aws.String(s.copySource(k2)),
+		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
+	})
+	if err != nil {
+		t.Logf("§9.6 provider refused the checksummed copy outright: %v", err)
+	} else {
+		out, herr := s.client.HeadObject(ctx, &awss3.HeadObjectInput{
+			Bucket: aws.String(p.bucket), Key: aws.String(k2), ChecksumMode: types.ChecksumModeEnabled,
+		})
+		if herr != nil {
+			t.Logf("§9.6 HeadObject after the copy: %v", herr)
+		} else if got := aws.ToString(out.ChecksumSHA256); got == "" {
+			t.Logf("§9.6 copy accepted but nothing stored — the known B2 no-op")
+		} else if got != wantB64 {
+			t.Logf("§9.6 checksum after copy = %q (whole object would be %q)", got, wantB64)
+		} else {
+			t.Logf("§9.6 self-copy with algorithm computed the checksum: OK")
+		}
+	}
+
+	// multipart upload path stores no checksum on any provider
+	if err := s.MkdirAll(ctx, MustParsePath("/sum")); err != nil {
+		t.Fatalf("§9.6 MkdirAll: %v", err)
+	}
+	target := MustParsePath("/sum/flow.bin")
+	handle, err := s.BeginUpload(ctx, target, int64(len(body)))
+	if err != nil {
+		t.Fatalf("§9.6 BeginUpload: %v", err)
+	}
+	t.Cleanup(func() { _ = s.AbortUpload(ctx, handle) })
+	urls, err := s.PresignParts(ctx, handle, []int{1})
+	if err != nil || len(urls) != 1 {
+		t.Fatalf("§9.6 PresignParts: %+v, %v", urls, err)
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPut, urls[0].URL, bytes.NewReader(body))
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("§9.6 PUT part: %v", err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		t.Fatalf("§9.6 PUT part status: %d", resp.StatusCode)
+	}
+	if err := s.CompleteUpload(ctx, handle, target); err != nil {
+		t.Fatalf("§9.6 CompleteUpload: %v", err)
+	}
+	if got, err := s.ObjectChecksum(ctx, target); err == nil {
+		t.Errorf("§9.6 ObjectChecksum after a multipart upload = %q, want a refusal: nothing can store a whole-object SHA-256 across parts", got)
+	} else {
+		t.Logf("§9.6 multipart upload stores no checksum (the file's SHA-256 is %q), refused as designed: %v", wantHex, err)
+	}
+}
+
+func TestS3B2ProbeMultipartChecksum(t *testing.T) {
+	p := newB2Probe(t)
+	ctx := p.ctx()
+	s := p.backend
+	body := []byte("zefile multipart checksum probe")
+	sum := sha256.Sum256(body)
+	wantB64 := base64.StdEncoding.EncodeToString(sum[:])
+
+	probe := func(name string, createChecksum, partChecksum bool, typ types.ChecksumType) {
+		k := "zefile-b2probe/" + name + ".bin"
+		in := &awss3.CreateMultipartUploadInput{
+			Bucket: aws.String(p.bucket), Key: aws.String(k),
+		}
+		if createChecksum {
+			in.ChecksumAlgorithm = types.ChecksumAlgorithmSha256
+			in.ChecksumType = typ
+		}
+		create, err := s.client.CreateMultipartUpload(ctx, in)
+		if err != nil {
+			if strings.Contains(err.Error(), "InvalidRequest") {
+				t.Logf("§9.7 %s: create refused (semantics): %v", name, err)
+				return
+			}
+			t.Errorf("§9.7 %s: create multipart: %v", name, err)
+			return
+		}
+		part := &awss3.UploadPartInput{
+			Bucket: aws.String(p.bucket), Key: aws.String(k),
+			UploadId: create.UploadId, PartNumber: aws.Int32(1), Body: bytes.NewReader(body),
+		}
+		if partChecksum {
+			part.ChecksumAlgorithm = types.ChecksumAlgorithmSha256
+		}
+		up, err := s.client.UploadPart(ctx, part)
+		if err != nil {
+			_, _ = s.client.AbortMultipartUpload(ctx, &awss3.AbortMultipartUploadInput{
+				Bucket: aws.String(p.bucket), Key: aws.String(k), UploadId: create.UploadId,
+			})
+			if strings.Contains(err.Error(), "InvalidRequest") {
+				t.Logf("§9.7 %s: part refused (semantics): %v", name, err)
+				return
+			}
+			t.Errorf("§9.7 %s: upload part: %v", name, err)
+			return
+		}
+		_, err = s.client.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{
+			Bucket: aws.String(p.bucket), Key: aws.String(k), UploadId: create.UploadId,
+			MultipartUpload: &types.CompletedMultipartUpload{
+				Parts: []types.CompletedPart{{ETag: up.ETag, PartNumber: aws.Int32(1)}},
+			},
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "InvalidRequest") {
+				t.Logf("§9.7 %s: complete refused (semantics): %v", name, err)
+				return
+			}
+			t.Errorf("§9.7 %s: complete multipart: %v", name, err)
+			return
+		}
+		out, err := s.client.HeadObject(ctx, &awss3.HeadObjectInput{
+			Bucket: aws.String(p.bucket), Key: aws.String(k), ChecksumMode: types.ChecksumModeEnabled,
+		})
+		if err != nil {
+			t.Errorf("§9.7 %s: head: %v", name, err)
+			return
+		}
+		t.Logf("§9.7 %s: complete OK — type=%q sha256=%q (whole-object would be %q)",
+			name, string(out.ChecksumType), aws.ToString(out.ChecksumSHA256), wantB64)
+	}
+
+	probe("plain-part-under-sha256-create", true, false, "")
+	probe("sdk-checksummed-part", true, true, "")
+	// AWS reserves FULL_OBJECT for the CRC family; B2 might not
+	probe("full-object-type", true, false, types.ChecksumTypeFullObject)
 }

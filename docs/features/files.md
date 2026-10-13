@@ -52,9 +52,17 @@ ratio — the ratio checked against bytes actually written, not the header's cla
 
 ## Checksums
 
-Ask for a file's **SHA-256** from its menu. Hashing runs as a background job and
-the result is cached — invalidated when the file's size or modification time
-changes — so verifying even a very large file never blocks the server.
+Ask for a file's **SHA-256** from its menu. On
+[object storage](/guide/deployment) the browser computes the digest **while
+the file uploads** and hands it over with the upload (nothing streams
+through the server) so it appears in one request, labelled *hashed in your
+browser*: the server never saw those bytes and presents the claim as exactly
+that. Where the store itself holds a value (a single-shot write, such as an
+empty file), that one is used instead. For everything else (file uploaded
+before checksums existed, a copy made server-side) hashing runs as a
+background job and the result is cached, invalidated when the file's size or
+modification time changes, so verifying even a very large file never blocks
+the server. On local storage the job is where every digest comes from.
 
 ## Background jobs
 

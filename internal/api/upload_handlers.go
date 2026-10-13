@@ -3,11 +3,15 @@ package api
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/krishna2206/zefile/internal/checksum"
 	"github.com/krishna2206/zefile/internal/quota"
 	"github.com/krishna2206/zefile/internal/storage"
 	"github.com/krishna2206/zefile/internal/upload"
@@ -143,6 +147,10 @@ func (s *Server) handleUploadParts(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
+	claim, ok := readChecksumClaim(w, r)
+	if !ok {
+		return
+	}
 	session, err := s.uploads.Complete(r.Context(), r.PathValue("token"))
 	if err != nil {
 		writeUploadError(w, r, err)
@@ -150,7 +158,41 @@ func (s *Server) handleUploadComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.thumbAfterUpload(r.Context(), session)
 	s.usageAfterUpload()
+	if claim != "" && s.checksums != nil {
+		if _, err := s.checksums.StoreClaim(r.Context(), session.Path, claim); err != nil {
+			slog.WarnContext(r.Context(), "checksum: storing the client's claim failed",
+				"path", session.Path.String(), "error", err)
+		}
+	}
 	writeJSON(w, r, http.StatusOK, uploadResponse(session))
+}
+
+func readChecksumClaim(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var body struct {
+		Checksum *struct {
+			Algorithm string `json:"algorithm"`
+			Hash      string `json:"hash"`
+		} `json:"checksum"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeProblem(w, r, http.StatusBadRequest, CodeBadRequest,
+			"Bad checksum", "The claim is not valid JSON.")
+		return "", false
+	}
+	if body.Checksum == nil {
+		return "", true
+	}
+	if body.Checksum.Algorithm != "" && body.Checksum.Algorithm != checksum.Algorithm {
+		writeProblem(w, r, http.StatusBadRequest, CodeBadRequest,
+			"Bad checksum", "Only sha256 claims are accepted.")
+		return "", false
+	}
+	if !checksum.ValidHash(body.Checksum.Hash) {
+		writeProblem(w, r, http.StatusBadRequest, CodeBadRequest,
+			"Bad checksum", "The claim must be a lowercase sha256 hex digest.")
+		return "", false
+	}
+	return body.Checksum.Hash, true
 }
 
 func (s *Server) usageAfterUpload() {

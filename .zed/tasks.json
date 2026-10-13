@@ -5,8 +5,17 @@
     "hide": "on_success",
   },
   {
+    "label": "Backend dev server",
+    "command": "sh -c 'if [ -f deploy/.env ]; then set -a; . deploy/.env; set +a; fi; mkdir -p data config && ZEFILE_APP_URL=http://localhost:8080 ZEFILE_DATA_DIR=$PWD/data ZEFILE_CONFIG_DIR=$PWD/config exec go run ./cmd/zefile'",
+  },
+  {
     "label": "UI dev server",
     "command": "cd web && pnpm run dev",
+  },
+  {
+    "label": "Go tests",
+    "command": "go test ./...",
+    "hide": "on_success",
   },
   {
     "label": "UI tests",

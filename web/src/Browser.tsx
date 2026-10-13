@@ -753,7 +753,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   // checksum computes (or reuses) a file's SHA-256 and copies it. Hashing runs
   // as a background job, so a large file is polled rather than awaited inline.
   const checksum = useCallback(async (entry: Entry) => {
-    const id = toast.loading(`Computing SHA-256 of “${entry.name}”…`)
+    const id = toast.loading(`Getting SHA-256 of “${entry.name}”…`)
     try {
       const res = await api.checksum(entry.path)
       let sum = res.checksum
@@ -768,7 +768,8 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       }
       if (!sum) throw new Error('no checksum returned')
       await navigator.clipboard.writeText(sum.hash)
-      toast.success('SHA-256 copied to clipboard', { id, description: sum.hash })
+      const note = sum.source === 'client' ? ' · hashed in-browser' : ''
+      toast.success('SHA-256 copied to clipboard', { id, description: sum.hash + note })
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not compute the checksum.', { id })
     }

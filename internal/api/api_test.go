@@ -1538,7 +1538,7 @@ func (m *memStore) WriteThumb(_ context.Context, key string, thumb []byte) error
 
 // objectClient builds a server over bareFS in object-storage mode. It
 // returns the thumb store for pre-seeding stored thumbnails.
-func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string, *memStore) {
+func objectClient(t *testing.T, previewMaxBytes int64, withJobs ...bool) (*httptest.Server, string, *memStore) {
 	t.Helper()
 
 	database, err := db.Open(t.Context(), db.Config{Dir: t.TempDir()})
@@ -1552,7 +1552,7 @@ func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string
 	}))
 	fs := bareFS{body: []byte("hello world")}
 	store := &memStore{blobs: make(map[string][]byte)}
-	srv := httptest.NewServer(api.New(api.Options{
+	opts := api.Options{
 		FS:              fs,
 		Auth:            service,
 		ACL:             acl.New(database),
@@ -1561,7 +1561,11 @@ func objectClient(t *testing.T, previewMaxBytes int64) (*httptest.Server, string
 		ObjectStorage:   true,
 		Thumbs:          thumb.New(fs, store, jobsStub{}, 512<<20, nil),
 		SecureCookies:   false,
-	}).Handler())
+	}
+	if len(withJobs) > 0 && withJobs[0] {
+		opts.Jobs = job.New(database)
+	}
+	srv := httptest.NewServer(api.New(opts).Handler())
 	t.Cleanup(srv.Close)
 
 	token, err := service.IssueSetupToken(t.Context())
@@ -1625,14 +1629,35 @@ func TestObjectStorageRefusesByteJobs(t *testing.T) {
 
 	srv, token, _ := objectClient(t, 0)
 
-	if code, _ := objectGet(t, srv, token, "/api/v1/fs/checksum?path=/f.bin"); code != http.StatusNotImplemented {
-		t.Errorf("checksum = %d, want 501", code)
-	}
 	if code := objectPost(t, srv, token, "/api/v1/fs/extract", map[string]string{"archive": "/a.zip"}); code != http.StatusNotImplemented {
 		t.Errorf("extract = %d, want 501", code)
 	}
 	if code := objectPost(t, srv, token, "/api/v1/fs/fetch", map[string]string{"url": "https://example.com/f"}); code != http.StatusNotImplemented {
 		t.Errorf("fetch = %d, want 501", code)
+	}
+
+	if code, _ := objectGet(t, srv, token, "/api/v1/fs/checksum?path=/f.bin"); code != http.StatusServiceUnavailable {
+		t.Errorf("checksum without a worker = %d, want 503", code)
+	}
+}
+
+func TestObjectStorageChecksumFallsBackToJob(t *testing.T) {
+	t.Parallel()
+
+	srv, token, _ := objectClient(t, 0, true)
+	code, raw := objectGet(t, srv, token, "/api/v1/fs/checksum?path=/f.bin")
+	if code != http.StatusAccepted {
+		t.Fatalf("checksum = %d: %s, want 202 with a job to poll", code, raw)
+	}
+	var out struct {
+		Checksum *checksum.Checksum `json:"checksum"`
+		Job      *struct{}          `json:"job"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Job == nil || out.Checksum != nil {
+		t.Errorf("response = %s, want a job and no checksum yet", raw)
 	}
 }
 

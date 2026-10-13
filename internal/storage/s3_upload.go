@@ -317,15 +317,25 @@ func (s *S3) listParts(ctx context.Context, key, uploadID string) ([]types.Part,
 	return parts, nil
 }
 
-// putEmpty writes the zero-byte object an empty upload consists of.
+// writes the zero-byte object an empty upload consists of. The
+// checksum algorithm rides on this PutObject directly: a single-part upload
+// is a full-object checksum, so the store holds the file's true SHA-256 with
+// no copy needed afterwards.
 func (s *S3) putEmpty(ctx context.Context, key, name string) error {
-	_, err := s.client.PutObject(ctx, &awss3.PutObjectInput{
+	in := &awss3.PutObjectInput{
 		Bucket:             aws.String(s.bucket),
 		Key:                aws.String(key),
 		Body:               bytes.NewReader(nil),
 		ContentType:        aws.String(contentTypeFor(name)),
 		ContentDisposition: aws.String(attachmentDisposition(name)),
-	})
+		ChecksumAlgorithm:  types.ChecksumAlgorithmSha256,
+	}
+	_, err := s.client.PutObject(ctx, in)
+	if err != nil {
+		// A store that refuses checksum headers still takes the object.
+		in.ChecksumAlgorithm = ""
+		_, err = s.client.PutObject(ctx, in)
+	}
 	return mapS3Err(err)
 }
 
