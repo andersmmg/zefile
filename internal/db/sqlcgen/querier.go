@@ -146,7 +146,7 @@ type Querier interface {
 	// whose wildcards a path containing '%' or '_' would trip.
 	MoveACLSubtree(ctx context.Context, arg MoveACLSubtreeParams) error
 	// A renamed subtree keeps its colours, and the stored parent is rewritten with
-	// it so the directory lookup stays correct underneath!
+	// it so the directory lookup stays correct underneath.
 	MoveEntryColorsSubtree(ctx context.Context, arg MoveEntryColorsSubtreeParams) error
 	// Follows a rename across a whole subtree in one statement. Only rows at or
 	// beneath the source move; the moved directory's own parent is untouched.
@@ -184,6 +184,9 @@ type Querier interface {
 	SetUserDisabled(ctx context.Context, arg SetUserDisabledParams) error
 	// A per-account storage cap in bytes. Zero means unlimited.
 	SetUserQuota(ctx context.Context, arg SetUserQuotaParams) error
+	// The interface colour theme the account chose: an id from the interface's
+	// palette. Empty means the interface default.
+	SetUserTheme(ctx context.Context, arg SetUserThemeParams) error
 	// Records use for the "last used" column. Best-effort, like session touch: a
 	// lost timestamp must never fail an otherwise-valid request.
 	TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error

@@ -22,4 +22,9 @@
     "command": "cd web && pnpm run test",
     "hide": "on_success",
   },
+  {
+    "label": "Generate sqlc code",
+    "command": "make generate",
+    "hide": "on_success",
+  },
 ]

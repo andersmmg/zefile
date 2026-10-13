@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 
 import { api, ApiError, type User } from './api'
 import { contentCache } from './lib/content-cache'
+import { applyPalette, DEFAULT_PALETTE } from './lib/palette'
 import { SignIn } from './SignIn'
 import { Browser } from './Browser'
 import { CircleNotchIcon } from '@phosphor-icons/react'
@@ -27,6 +28,7 @@ export function App() {
   const resolve = useCallback(async () => {
     const signOut = () => {
       contentCache.clear()
+      applyPalette(DEFAULT_PALETTE)
       setState({ phase: 'signed-out' })
     }
     // An invite link is its own entry point: it creates an account, so it comes
@@ -42,6 +44,7 @@ export function App() {
         return
       }
       const user = await api.me()
+      applyPalette(user.theme)
       setState({ phase: 'ready', user })
     } catch (err) {
       if (err instanceof ApiError && err.problem.status === 401) {

@@ -31,6 +31,7 @@ type userResponse struct {
 	IsAdmin     bool      `json:"is_admin"`
 	TOTPEnabled bool      `json:"totp_enabled"`
 	CreatedAt   time.Time `json:"created_at"`
+	Theme       string    `json:"theme"`
 }
 
 type sessionResponse struct {
@@ -183,6 +184,7 @@ func toUserResponse(u auth.User) userResponse {
 		IsAdmin:     u.IsAdmin,
 		TOTPEnabled: u.TOTPEnabled,
 		CreatedAt:   u.CreatedAt,
+		Theme:       u.Theme,
 	}
 }
 

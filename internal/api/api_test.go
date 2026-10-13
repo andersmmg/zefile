@@ -1174,6 +1174,50 @@ func TestProfilePasswordAndSessions(t *testing.T) {
 	}
 }
 
+// per-account theme tests
+func TestThemePreference(t *testing.T) {
+	t.Parallel()
+
+	c := newClient(t)
+	c.setUp() // admin
+
+	// default
+	me := decode[struct {
+		Theme string `json:"theme"`
+	}](t, mustGet(c, "/api/v1/auth/me"))
+	if me.Theme != "" {
+		t.Fatalf("initial theme = %q, want empty", me.Theme)
+	}
+
+	// stored theme
+	if resp, body := c.do(http.MethodPut, "/api/v1/auth/theme", map[string]string{"theme": "ocean"}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("set theme = %d: %s", resp.StatusCode, body)
+	}
+	me = decode[struct {
+		Theme string `json:"theme"`
+	}](t, mustGet(c, "/api/v1/auth/me"))
+	if me.Theme != "ocean" {
+		t.Fatalf("theme = %q, want ocean", me.Theme)
+	}
+
+	// invalid shapes
+	for _, bad := range []string{"Ocean!", "../etc", "a really long theme id that runs past the limit"} {
+		if resp, _ := c.do(http.MethodPut, "/api/v1/auth/theme", map[string]string{"theme": bad}); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("set theme %q = %d, want 400", bad, resp.StatusCode)
+		}
+	}
+	// explicit reset to default
+	if resp, body := c.do(http.MethodPut, "/api/v1/auth/theme", map[string]string{"theme": ""}); resp.StatusCode != http.StatusOK {
+		t.Fatalf("reset theme = %d: %s", resp.StatusCode, body)
+	}
+	me = decode[struct {
+		Theme string `json:"theme"`
+	}](t, mustGet(c, "/api/v1/auth/me"))
+	if me.Theme != "" {
+		t.Fatalf("theme after reset = %q, want empty", me.Theme)
+	}
+}
+
 // invite creates a non-admin account and returns its id and session token.
 func (c *client) invite(username string) (int64, string) {
 	c.t.Helper()

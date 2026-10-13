@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState, type SubmitEvent, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { CircleNotchIcon, DeviceMobileIcon, MonitorIcon } from '@phosphor-icons/react'
+import { CheckIcon, CircleNotchIcon, DeviceMobileIcon, MonitorIcon } from '@phosphor-icons/react'
 import { toDataURL } from 'qrcode'
 
 import { api, ApiError, formatSize, type SessionInfo, type Space, type User } from '@/api'
 import { formatRelativeTime } from '@/lib/files'
+import { applyPalette, currentPaletteId, PALETTES, type Palette } from '@/lib/palette'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -64,6 +65,7 @@ export function SettingsScreen({ me, onSignedOut }: { me: User; onSignedOut: () 
             </div>
           </section>
 
+          <AppearanceSection />
           <PasswordSection />
           <TwoFactorSection initiallyEnabled={!!me.totp_enabled} />
           <RecoveryCodesSection />
@@ -74,6 +76,64 @@ export function SettingsScreen({ me, onSignedOut }: { me: User; onSignedOut: () 
         </div>
       </div>
     </div>
+  )
+}
+
+/**
+ * account colour theme picker, maybe eventually custom hue as well?
+ */
+function AppearanceSection() {
+  const [current, setCurrent] = useState(currentPaletteId())
+
+  async function choose(palette: Palette) {
+    if (palette.id === current) return
+    const previous = current
+    applyPalette(palette.id)
+    setCurrent(palette.id)
+    try {
+      await api.setTheme(palette.id)
+    } catch {
+      applyPalette(previous)
+      setCurrent(previous)
+      toast.error('Could not save your colour theme. Please try again.')
+    }
+  }
+
+  return (
+    <section>
+      <SectionLabel>Appearance</SectionLabel>
+      <div className="rounded-lg border p-4">
+        <p className="text-sm text-muted-foreground">
+          Choose the main color for your interface.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {PALETTES.map((palette) => {
+            const selected = palette.id === current
+            return (
+              <button
+                key={palette.id}
+                type="button"
+                onClick={() => void choose(palette)}
+                aria-pressed={selected}
+                title={palette.label}
+                className={`flex items-center gap-2 rounded-full border py-1 pr-3 pl-1 text-sm transition-colors ${
+                  selected ? 'border-primary ring-1 ring-primary' : 'border-border hover:bg-accent'
+                }`}
+              >
+                <span
+                  className="grid size-5 place-items-center rounded-full"
+                  style={{ backgroundColor: palette.seed }}
+                  aria-hidden
+                >
+                  {selected && <CheckIcon className="size-3 text-black/60" weight="bold" />}
+                </span>
+                {palette.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -258,7 +318,7 @@ function RecoveryCodesSection() {
         <div>
           <h2 className="text-base font-semibold text-foreground">Recovery codes</h2>
           <p className="text-sm text-muted-foreground">
-            Use one to reset a forgotten password — there is no email recovery.
+            Use one to reset a forgotten password, because there is no email recovery!
             {remaining !== null && ` ${remaining} left.`}
           </p>
         </div>
@@ -269,7 +329,7 @@ function RecoveryCodesSection() {
       {codes && (
         <div className="space-y-2 rounded-md border p-3">
           <p className="text-xs text-muted-foreground">
-            Save these now — they are shown only once, and regenerating replaced any previous set.
+            Save these now, they are shown only once, and regenerating replaced any previous set!
           </p>
           <div className="grid grid-cols-2 gap-1.5 font-mono text-sm">
             {codes.map((code) => (

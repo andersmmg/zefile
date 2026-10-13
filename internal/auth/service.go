@@ -94,6 +94,7 @@ type User struct {
 	TOTPEnabled bool
 	CreatedAt   time.Time
 	QuotaBytes  int64
+	Theme       string
 }
 
 // GetUser returns one account by id.
@@ -147,6 +148,21 @@ func (s *Service) SetUserQuota(ctx context.Context, id int64, quotaBytes int64) 
 		ID:         id,
 	}); err != nil {
 		return fmt.Errorf("auth: set quota: %w", err)
+	}
+	return nil
+}
+
+// records the interface colour theme the account chose
+func (s *Service) SetUserTheme(ctx context.Context, id int64, theme string) error {
+	if len(theme) > 32 {
+		return fmt.Errorf("auth: theme id too long")
+	}
+	if err := s.writes.SetUserTheme(ctx, sqlcgen.SetUserThemeParams{
+		Theme:     theme,
+		UpdatedAt: s.now().Unix(),
+		ID:        id,
+	}); err != nil {
+		return fmt.Errorf("auth: set theme: %w", err)
 	}
 	return nil
 }
@@ -793,6 +809,7 @@ func toUser(row sqlcgen.User) User {
 		TOTPEnabled: row.TotpSecret.Valid && row.TotpSecret.String != "",
 		CreatedAt:   time.Unix(row.CreatedAt, 0).UTC(),
 		QuotaBytes:  row.QuotaBytes,
+		Theme:       row.Theme,
 	}
 }
 

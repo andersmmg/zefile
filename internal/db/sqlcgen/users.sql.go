@@ -26,7 +26,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, is_admin, created_at, updated_at)
 VALUES (?, ?, ?, ?, ?, ?)
-RETURNING id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes
+RETURNING id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes, theme
 `
 
 type CreateUserParams struct {
@@ -59,6 +59,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.QuotaBytes,
+		&i.Theme,
 	)
 	return i, err
 }
@@ -76,7 +77,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes FROM users WHERE id = ?
+SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes, theme FROM users WHERE id = ?
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -93,12 +94,13 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.QuotaBytes,
+		&i.Theme,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes FROM users WHERE username = ? AND disabled = 0
+SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes, theme FROM users WHERE username = ? AND disabled = 0
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -115,12 +117,13 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.QuotaBytes,
+		&i.Theme,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes FROM users ORDER BY username
+SELECT id, username, email, password_hash, is_admin, totp_secret, disabled, created_at, updated_at, quota_bytes, theme FROM users ORDER BY username
 `
 
 func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
@@ -143,6 +146,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]User, error) {
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.QuotaBytes,
+			&i.Theme,
 		); err != nil {
 			return nil, err
 		}
@@ -217,6 +221,23 @@ type SetUserQuotaParams struct {
 // A per-account storage cap in bytes. Zero means unlimited.
 func (q *Queries) SetUserQuota(ctx context.Context, arg SetUserQuotaParams) error {
 	_, err := q.db.ExecContext(ctx, setUserQuota, arg.QuotaBytes, arg.UpdatedAt, arg.ID)
+	return err
+}
+
+const setUserTheme = `-- name: SetUserTheme :exec
+UPDATE users SET theme = ?, updated_at = ? WHERE id = ?
+`
+
+type SetUserThemeParams struct {
+	Theme     string
+	UpdatedAt int64
+	ID        int64
+}
+
+// The interface colour theme the account chose: an id from the interface's
+// palette. Empty means the interface default.
+func (q *Queries) SetUserTheme(ctx context.Context, arg SetUserThemeParams) error {
+	_, err := q.db.ExecContext(ctx, setUserTheme, arg.Theme, arg.UpdatedAt, arg.ID)
 	return err
 }
 

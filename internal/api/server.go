@@ -157,6 +157,7 @@ func (s *Server) Handler() http.Handler {
 	authed := http.NewServeMux()
 	authed.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
 	authed.HandleFunc("GET /api/v1/auth/me", s.handleMe)
+	authed.HandleFunc("PUT /api/v1/auth/theme", s.handleSetTheme)
 	authed.HandleFunc("POST /api/v1/auth/password", s.handleChangePassword)
 	authed.HandleFunc("POST /api/v1/auth/totp/enroll", s.handleTOTPEnroll)
 	authed.HandleFunc("POST /api/v1/auth/totp/enable", s.handleTOTPEnable)

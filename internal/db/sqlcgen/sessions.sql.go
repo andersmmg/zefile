@@ -61,7 +61,7 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context, expiresAt int64) er
 }
 
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
-SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.last_seen_at, sessions.expires_at, sessions.user_agent, sessions.ip, sessions.revoked_at, users.id, users.username, users.email, users.password_hash, users.is_admin, users.totp_secret, users.disabled, users.created_at, users.updated_at, users.quota_bytes
+SELECT sessions.id, sessions.user_id, sessions.token_hash, sessions.created_at, sessions.last_seen_at, sessions.expires_at, sessions.user_agent, sessions.ip, sessions.revoked_at, users.id, users.username, users.email, users.password_hash, users.is_admin, users.totp_secret, users.disabled, users.created_at, users.updated_at, users.quota_bytes, users.theme
 FROM sessions
 JOIN users ON users.id = sessions.user_id
 WHERE sessions.token_hash = ?
@@ -106,6 +106,7 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, arg GetSessionByTok
 		&i.User.CreatedAt,
 		&i.User.UpdatedAt,
 		&i.User.QuotaBytes,
+		&i.User.Theme,
 	)
 	return i, err
 }

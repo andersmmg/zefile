@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -49,6 +50,40 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, r, http.StatusNoContent, nil)
 }
+
+// interface colour theme for the account
+type themeRequest struct {
+	Theme string `json:"theme"`
+}
+
+// set a theme palette id
+func (s *Server) handleSetTheme(w http.ResponseWriter, r *http.Request) {
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
+
+	var body themeRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	// reset theme if invalid
+	if body.Theme != "" && !themeIDRe.MatchString(body.Theme) {
+		writeFieldProblem(w, r, map[string]string{
+			"theme": "Unknown theme. Choose one of the themes the interface offers.",
+		})
+		return
+	}
+
+	if err := s.auth.SetUserTheme(r.Context(), c.user.ID, body.Theme); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusOK, themeRequest{Theme: body.Theme})
+}
+
+var themeIDRe = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 
 type sessionSummary struct {
 	ID         int64     `json:"id"`

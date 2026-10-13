@@ -7,61 +7,63 @@
  * one signal. */
 @custom-variant dark (&:is(.dark *));
 
-/* Zefile's palette expressed as shadcn's semantic tokens.
+/* Zefile's palette, calculated from one colour.
  *
- * The brand is a pine green (#2F5D50) with a brass accent (#8E6528). Everything
- * else is a neutral warmed a few degrees towards the green so the surface does
- * not read as clinical grey. Values are plain hex on purpose: a colour you can
- * read is a colour you can correct, and the tonal-ramp generation this replaces
- * was a whole toolchain to avoid picking sixteen of them by hand. */
+ * All color tokens are derived from a single seed color (--seed) using
+ perceptually accurate mixing (via oklch), destructive red remains */
 :root {
   --radius: 0.625rem;
 
-  --background: #fbfbf9;
-  --foreground: #1a1c1b;
-  --card: #ffffff;
-  --card-foreground: #1a1c1b;
-  --popover: #ffffff;
-  --popover-foreground: #1a1c1b;
-  --primary: #2f5d50;
-  --primary-foreground: #ffffff;
-  --secondary: #e6ece8;
-  --secondary-foreground: #223029;
-  --muted: #eef0ee;
-  --muted-foreground: #5b625e;
-  --accent: #e6ece8;
-  --accent-foreground: #223029;
+  --seed: #7fd0bb;
+
+  /* Light mode: the seed darkened into an ink, lightened into washes. */
+  --background: color-mix(in oklch, var(--seed) 7%, white);
+  --foreground: color-mix(in oklch, var(--seed) 25%, black);
+  --card: color-mix(in oklch, var(--seed) 3%, white);
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in oklch, var(--seed) 3%, white);
+  --popover-foreground: var(--foreground);
+  --primary: color-mix(in oklch, var(--seed) 52%, black);
+  --primary-foreground: color-mix(in oklch, var(--seed) 4%, white);
+  --secondary: color-mix(in oklch, var(--seed) 28%, white);
+  --secondary-foreground: color-mix(in oklch, var(--foreground) 86%, var(--background));
+  --muted: color-mix(in oklch, var(--seed) 20%, white);
+  --muted-foreground: color-mix(in oklch, var(--foreground) 69%, var(--background));
+  --accent: color-mix(in oklch, var(--seed) 28%, white);
+  --accent-foreground: color-mix(in oklch, var(--foreground) 86%, var(--background));
   --destructive: #b3261e;
   --destructive-foreground: #ffffff;
-  --border: #dde1de;
-  --input: #dde1de;
-  --ring: #2f5d50;
+  --border: color-mix(in oklch, var(--foreground) 11%, var(--background));
+  --input: color-mix(in oklch, var(--foreground) 11%, var(--background));
+  --ring: var(--primary);
 
-  --brand: #8e6528;
+  --brand: color-mix(in oklch, var(--seed) 78%, black);
 }
 
 .dark {
-  --background: #0f1412;
-  --foreground: #e6e9e6;
-  --card: #171d1a;
-  --card-foreground: #e6e9e6;
-  --popover: #171d1a;
-  --popover-foreground: #e6e9e6;
-  --primary: #7fd0bb;
-  --primary-foreground: #06231b;
-  --secondary: #263029;
-  --secondary-foreground: #d6ddd8;
-  --muted: #1f2723;
-  --muted-foreground: #9aa39d;
-  --accent: #263029;
-  --accent-foreground: #e6e9e6;
+  /* Dark mode: the seed itself is the accent (it is already a light colour),
+   * with surfaces as the seed sunk into black and inks lifted toward white. */
+  --background: color-mix(in oklch, var(--seed) 24%, black);
+  --foreground: color-mix(in oklch, var(--seed) 18%, white);
+  --card: color-mix(in oklch, var(--seed) 30%, black);
+  --card-foreground: var(--foreground);
+  --popover: color-mix(in oklch, var(--seed) 30%, black);
+  --popover-foreground: var(--foreground);
+  --primary: var(--seed);
+  --primary-foreground: color-mix(in oklch, var(--seed) 31%, black);
+  --secondary: color-mix(in oklch, var(--seed) 39%, black);
+  --secondary-foreground: color-mix(in oklch, var(--foreground) 90%, var(--background));
+  --muted: color-mix(in oklch, var(--seed) 34%, black);
+  --muted-foreground: color-mix(in oklch, var(--foreground) 68%, var(--background));
+  --accent: color-mix(in oklch, var(--seed) 39%, black);
+  --accent-foreground: color-mix(in oklch, var(--foreground) 90%, var(--background));
   --destructive: #e5484d;
   --destructive-foreground: #ffffff;
-  --border: #2a322d;
-  --input: #2a322d;
-  --ring: #7fd0bb;
+  --border: color-mix(in oklch, var(--foreground) 16%, var(--background));
+  --input: color-mix(in oklch, var(--foreground) 16%, var(--background));
+  --ring: var(--primary);
 
-  --brand: #d0a35a;
+  --brand: color-mix(in oklch, var(--seed) 70%, white);
 }
 
 @theme inline {

@@ -43,6 +43,7 @@ Field-level validation errors add an `errors` map of field name to message.
 | `POST` | `/api/v1/auth/login` | Sign in; sets the session cookie, returns a token |
 | `POST` | `/api/v1/auth/logout` | Revoke the current session |
 | `GET` | `/api/v1/auth/me` | The signed-in account |
+| `PUT` | `/api/v1/auth/theme` | Set the interface colour theme  `{ "theme": "pine" }`, `""` resets |
 | `POST` | `/api/v1/auth/password` | Change password (ends other sessions) |
 | `GET` | `/api/v1/auth/sessions` | List active sessions |
 | `POST` | `/api/v1/auth/sessions/revoke-others` | Sign out every other device |

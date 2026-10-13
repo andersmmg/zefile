@@ -134,7 +134,14 @@ export type TrashItem = {
   size: number
   deleted_at: string
 }
-export type User = { id: number; username: string; email?: string; is_admin: boolean; totp_enabled?: boolean }
+export type User = {
+  id: number
+  username: string
+  email?: string
+  is_admin: boolean
+  totp_enabled?: boolean
+  theme?: string
+}
 
 /** Invitation is a pending invite as an admin sees it. `token` is present only
  *  at creation — the interface builds the link from it and its own origin. */
@@ -232,6 +239,13 @@ export const api = {
 
   logout: () => request<void>('/api/v1/auth/logout', { method: 'POST' }),
   me: () => request<User>('/api/v1/auth/me'),
+
+  // Colour theme: one seed colour, per account
+  setTheme: (theme: string) =>
+    request<{ theme: string }>('/api/v1/auth/theme', {
+      method: 'PUT',
+      body: JSON.stringify({ theme }),
+    }),
 
   // Two-factor authentication (TOTP). enroll mints a candidate secret and the
   // otpauth URI to turn into a QR; enable saves it once a code confirms it.
