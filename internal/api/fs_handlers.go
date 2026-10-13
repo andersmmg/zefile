@@ -114,6 +114,53 @@ func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, out)
 }
 
+type fileInfoResponse struct {
+	Path    string     `json:"path"`
+	Name    string     `json:"name"`
+	IsDir   bool       `json:"is_dir"`
+	Symlink bool       `json:"symlink,omitempty"`
+	Size    int64      `json:"size"`
+	ModTime time.Time  `json:"mod_time"`
+	Owner   string     `json:"owner,omitempty"`
+	AddedAt *time.Time `json:"added_at,omitempty"`
+}
+
+// describes one entry for the details panel
+func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
+	p, ok := pathParam(w, r)
+	if !ok {
+		return
+	}
+
+	info, err := s.fs.Stat(r.Context(), p)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	out := fileInfoResponse{
+		Path:    info.Path.String(),
+		Name:    info.Name,
+		IsDir:   info.IsDir,
+		Symlink: info.Symlink,
+		Size:    info.Size,
+		ModTime: info.ModTime.UTC(),
+	}
+
+	own, found, err := s.acl.OwnershipOf(r.Context(), p)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if found {
+		at := time.Unix(own.AddedAt, 0).UTC()
+		out.AddedAt = &at
+		if u, err := s.auth.GetUser(r.Context(), own.OwnerID); err == nil {
+			out.Owner = u.Username
+		}
+	}
+	writeJSON(w, r, http.StatusOK, out)
+}
+
 type colorRequest struct {
 	Path  string `json:"path"`
 	Color string `json:"color"`

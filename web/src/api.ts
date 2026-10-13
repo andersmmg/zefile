@@ -17,6 +17,18 @@ export type Entry = {
 
 export type Listing = { path: string; entries: Entry[] }
 
+/** FileInfo is the /fs/info answer: the facts a details panel shows.
+ *  Size and mod_time come from the tree */
+export type FileInfo = {
+  path: string
+  name: string
+  is_dir: boolean
+  size: number
+  mod_time: string
+  owner?: string
+  added_at?: string
+}
+
 /** Share is a public link to a file. `url` is only present at creation — the
  *  token is shown once and never stored in plain form. */
 export type Share = {
@@ -306,6 +318,8 @@ export const api = {
   revokeInvitation: (id: number) => request<void>(`/api/v1/invitations/${id}`, { method: 'DELETE' }),
 
   list: (path: string) => request<Listing>(`/api/v1/fs?path=${encodeURIComponent(path)}`),
+
+  info: (path: string) => request<FileInfo>(`/api/v1/fs/info?path=${encodeURIComponent(path)}`),
 
   // search finds entries by name under a root folder (recursively). `truncated`
   // says the walk hit its limit and more matches may exist.

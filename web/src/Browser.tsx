@@ -15,6 +15,7 @@ import {
   FingerprintIcon,
   FolderOpenIcon,
   HouseIcon,
+  InfoIcon,
   KeyIcon,
   LinkSimpleIcon,
   ListIcon,
@@ -48,6 +49,7 @@ import { AccessDialog } from '@/components/access-dialog'
 import { ActivityScreen } from '@/components/activity-screen'
 import { Sidebar } from '@/components/app-sidebar'
 import { CreateContextItems, type CreateActions } from '@/components/create-menu'
+import { FileInfoDialog } from '@/components/file-info-dialog'
 import { MembersScreen } from '@/components/members-screen'
 import { PreviewOverlay } from '@/components/preview-overlay'
 import { SettingsScreen } from '@/components/settings-screen'
@@ -201,6 +203,7 @@ type EntryActions = {
   download: (entry: Entry) => void
   downloadZip: (entry: Entry) => void
   checksum: (entry: Entry) => void
+  info: (entry: Entry) => void
   extract: (entry: Entry) => void
   share: (entry: Entry) => void
   manageAccess: (entry: Entry) => void
@@ -286,6 +289,7 @@ type DialogState =
   | { kind: 'delete'; entries: Entry[] }
   | { kind: 'share'; entry: Entry }
   | { kind: 'access'; entry: Entry }
+  | { kind: 'info'; entry: Entry }
 
 export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => void }) {
   const homePath = user.is_admin ? '/' : `/members/${user.username}`
@@ -883,6 +887,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     extract: (entry) => void extract(entry),
     share: (entry) => setDialog({ kind: 'share', entry }),
     manageAccess: (entry) => setDialog({ kind: 'access', entry }),
+    info: (entry) => setDialog({ kind: 'info', entry }),
     canManageAccess: user.is_admin,
     copy: (entry) => setClipboard({ mode: 'copy', entries: clipboardTargets(entry) }),
     cut: (entry) => setClipboard({ mode: 'cut', entries: clipboardTargets(entry) }),
@@ -1613,6 +1618,10 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         <AccessDialog entry={dialog.entry} onClose={() => setDialog(null)} />
       )}
 
+      {dialog?.kind === 'info' && (
+        <FileInfoDialog entry={dialog.entry} onClose={() => setDialog(null)} />
+      )}
+
       {preview && (
         <PreviewOverlay
           objectStorage={objectStorage}
@@ -2116,7 +2125,11 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
           </ContextMenuSubContent>
         </ContextMenuSub>
 
-        {(rename || remove) && <ContextMenuSeparator />}
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={() => actions.info(entry)}>
+          <InfoIcon />
+          {entry.is_dir ? 'Folder info' : 'File info'}
+        </ContextMenuItem>
         {rename && (
           <ContextMenuItem onSelect={() => actions.rename(entry)}>
             <PencilSimpleIcon />

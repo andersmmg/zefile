@@ -1757,6 +1757,69 @@ func TestStoredThumbnailIsServed(t *testing.T) {
 	}
 }
 
+// details panel endpoint test
+func TestFileInfo(t *testing.T) {
+	c := newClient(t)
+	c.setUp()
+
+	body := []byte("hello, info")
+	loc := tusCreate(t, c, "/note.txt", int64(len(body)))
+	tusWrite(t, c, loc, 0, body, true)
+
+	type info struct {
+		Path    string     `json:"path"`
+		Name    string     `json:"name"`
+		IsDir   bool       `json:"is_dir"`
+		Size    int64      `json:"size"`
+		ModTime time.Time  `json:"mod_time"`
+		Owner   string     `json:"owner"`
+		AddedAt *time.Time `json:"added_at"`
+	}
+
+	resp, raw := c.do(http.MethodGet, "/api/v1/fs/info?path=/note.txt", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("info = %d: %s", resp.StatusCode, raw)
+	}
+	got := decode[info](t, raw)
+	if got.Name != "note.txt" || got.Path != "/note.txt" || got.IsDir {
+		t.Errorf("info identity = %+v", got)
+	}
+	if got.Size != int64(len(body)) {
+		t.Errorf("size = %d, want %d", got.Size, len(body))
+	}
+	if got.ModTime.IsZero() {
+		t.Error("mod_time is zero")
+	}
+	if got.Owner != "krishna" {
+		t.Errorf("owner = %q, want %q", got.Owner, "krishna")
+	}
+	if got.AddedAt == nil {
+		t.Fatal("added_at missing for an uploaded file")
+	}
+	if age := time.Since(*got.AddedAt); age < 0 || age > time.Minute {
+		t.Errorf("added_at = %v, want it within the last minute", got.AddedAt)
+	}
+
+	// no upload record
+	if err := c.aclEngi.ClearOwner(t.Context(), storage.MustParsePath("/note.txt")); err != nil {
+		t.Fatalf("ClearOwner: %v", err)
+	}
+	resp, raw = c.do(http.MethodGet, "/api/v1/fs/info?path=/note.txt", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("info after ClearOwner = %d: %s", resp.StatusCode, raw)
+	}
+	got = decode[info](t, raw)
+	if got.Owner != "" || got.AddedAt != nil {
+		t.Errorf("unowned info = %+v, want no owner and no added_at", got)
+	}
+
+	// 404
+	resp, _ = c.do(http.MethodGet, "/api/v1/fs/info?path=/missing.txt", nil)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("missing info = %d, want 404", resp.StatusCode)
+	}
+}
+
 func TestSpaceReportsUsageAndQuota(t *testing.T) {
 	c := newClient(t)
 	c.setUp() // admin krishna

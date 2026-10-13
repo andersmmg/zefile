@@ -55,6 +55,7 @@ Field-level validation errors add an `errors` map of field name to message.
 | --- | --- | --- |
 | `GET` | `/api/v1/fs?path=` | List a directory |
 | `GET` | `/api/v1/fs/stat?path=` | Metadata for one entry |
+| `GET` | `/api/v1/fs/info?path=` | Size, dates and owner for one entry |
 | `GET` | `/api/v1/fs/search?q=` | Recursive search (only what you may see) |
 | `POST` | `/api/v1/fs/dirs` | Create a directory — `{ "path": "/x" }` |
 | `POST` | `/api/v1/fs/move` | Move or rename |

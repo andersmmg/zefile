@@ -171,6 +171,7 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/fs", s.handleList)
 	authed.HandleFunc("GET /api/v1/fs/search", s.handleSearch)
 	authed.HandleFunc("GET /api/v1/fs/stat", s.handleStat)
+	authed.HandleFunc("GET /api/v1/fs/info", s.handleInfo)
 	authed.HandleFunc("DELETE /api/v1/fs", s.handleDelete)
 	authed.HandleFunc("POST /api/v1/fs/dirs", s.handleMkdir)
 	authed.HandleFunc("POST /api/v1/fs/move", s.handleMove)

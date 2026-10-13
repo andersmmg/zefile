@@ -697,6 +697,22 @@ func (e *Engine) OwnerOf(ctx context.Context, p storage.Path) (int64, bool, erro
 	return row.OwnerID, true, nil
 }
 
+type Ownership struct {
+	OwnerID int64
+	AddedAt int64
+}
+
+func (e *Engine) OwnershipOf(ctx context.Context, p storage.Path) (Ownership, bool, error) {
+	row, err := e.reads.GetFileOwner(ctx, p.String())
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Ownership{}, false, nil
+		}
+		return Ownership{}, false, fmt.Errorf("acl: read ownership: %w", err)
+	}
+	return Ownership{OwnerID: row.OwnerID, AddedAt: row.CreatedAt}, true, nil
+}
+
 // LoadSubject assembles a subject from an account, reading group membership
 // once so that resolution never has to.
 func (e *Engine) LoadSubject(ctx context.Context, userID int64, isAdmin bool) (Subject, error) {
