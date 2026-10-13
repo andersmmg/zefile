@@ -17,6 +17,8 @@ export type Entry = {
 
 export type Listing = { path: string; entries: Entry[] }
 
+export type ChildCount = { files: number; dirs: number }
+
 /** FileInfo is the /fs/info answer: the facts a details panel shows.
  *  Size and mod_time come from the tree */
 export type FileInfo = {
@@ -320,6 +322,8 @@ export const api = {
   list: (path: string) => request<Listing>(`/api/v1/fs?path=${encodeURIComponent(path)}`),
 
   info: (path: string) => request<FileInfo>(`/api/v1/fs/info?path=${encodeURIComponent(path)}`),
+
+  count: (path: string) => request<ChildCount>(`/api/v1/fs/count?path=${encodeURIComponent(path)}`),
 
   // search finds entries by name under a root folder (recursively). `truncated`
   // says the walk hit its limit and more matches may exist.

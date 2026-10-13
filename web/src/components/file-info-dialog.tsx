@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 // renders a timestamp the way a details panel does
 function when(iso: string): string {
   const at = new Date(iso)
-  if (Number.isNaN(at.getTime())) return 'Unknown'
+  if (Number.isNaN(at.getTime()) || at.getTime() <= 0) return 'Unknown'
   return at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 

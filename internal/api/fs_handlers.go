@@ -98,6 +98,33 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, r, http.StatusOK, listResponse{Path: p.String(), Entries: out})
 }
 
+type countResponse struct {
+	Files int64 `json:"files"`
+	Dirs  int64 `json:"dirs"`
+}
+
+func (s *Server) handleCount(w http.ResponseWriter, r *http.Request) {
+	p, ok := pathParam(w, r)
+	if !ok {
+		return
+	}
+
+	entries, err := s.fs.List(r.Context(), p)
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	var out countResponse
+	for _, entry := range entries {
+		if entry.IsDir {
+			out.Dirs++
+		} else {
+			out.Files++
+		}
+	}
+	writeJSON(w, r, http.StatusOK, out)
+}
+
 func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
 	p, ok := pathParam(w, r)
 	if !ok {

@@ -1,7 +1,37 @@
 // character-limit truncation of displayed file names
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { NAME_LIMIT, shortName } from '../src/lib/files.ts'
+import { childLabel, formatRelativeTime, NAME_LIMIT, shortName } from '../src/lib/files.ts'
+
+describe('formatRelativeTime', () => {
+  it('renders a real timestamp relatively', () => {
+    assert.equal(formatRelativeTime(new Date(Date.now() - 2 * 3600_000).toISOString()), '2 hours ago')
+    assert.equal(formatRelativeTime(new Date().toISOString()), 'just now')
+  })
+
+  it('an unknown timestamp — object storage\'s zero time — has no label', () => {
+    assert.equal(formatRelativeTime('0001-01-01T00:00:00Z'), '')
+    assert.equal(formatRelativeTime('not a date'), '')
+  })
+})
+
+describe('childLabel', () => {
+  it('names both kinds, folders first, in the singular when there is one', () => {
+    assert.equal(childLabel({ files: 3, dirs: 2 }), '2 folders · 3 files')
+    assert.equal(childLabel({ files: 1, dirs: 1 }), '1 folder · 1 file')
+    assert.equal(childLabel({ files: 1, dirs: 0 }), '1 file')
+    assert.equal(childLabel({ files: 0, dirs: 4 }), '4 folders')
+  })
+
+  it('an empty folder says so', () => {
+    assert.equal(childLabel({ files: 0, dirs: 0 }), 'Empty')
+  })
+
+  it('a count that has not arrived — or could not be fetched — shows nothing', () => {
+    assert.equal(childLabel(undefined), '')
+    assert.equal(childLabel(null), '')
+  })
+})
 
 describe('shortName', () => {
   it('leaves names within the budget untouched', () => {

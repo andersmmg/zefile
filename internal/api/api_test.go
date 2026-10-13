@@ -1857,6 +1857,49 @@ func TestFileInfo(t *testing.T) {
 	}
 }
 
+// the numbers shown under a folder
+func TestChildCount(t *testing.T) {
+	c := newClient(t)
+	c.setUp()
+
+	for _, dir := range []string{"/box", "/box/sub", "/box/inner"} {
+		resp, raw := c.do(http.MethodPost, "/api/v1/fs/dirs", map[string]string{"path": dir})
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("mkdir %s = %d: %s", dir, resp.StatusCode, raw)
+		}
+	}
+	body := []byte("count me")
+	for _, name := range []string{"/box/a.txt", "/box/b.txt"} {
+		loc := tusCreate(t, c, name, int64(len(body)))
+		tusWrite(t, c, loc, 0, body, true)
+	}
+
+	type shape struct {
+		Files int64 `json:"files"`
+		Dirs  int64 `json:"dirs"`
+	}
+	resp, raw := c.do(http.MethodGet, "/api/v1/fs/count?path=/box", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("count = %d: %s", resp.StatusCode, raw)
+	}
+	if got := decode[shape](t, raw); got.Files != 2 || got.Dirs != 2 {
+		t.Errorf("count(/box) = %+v, want 2 files and 2 folders", got)
+	}
+
+	resp, raw = c.do(http.MethodGet, "/api/v1/fs/count?path=/box/sub", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("count of an empty folder = %d: %s", resp.StatusCode, raw)
+	}
+	if got := decode[shape](t, raw); got.Files != 0 || got.Dirs != 0 {
+		t.Errorf("count(/box/sub) = %+v, want empty", got)
+	}
+
+	resp, raw = c.do(http.MethodGet, "/api/v1/fs/count?path=/box/a.txt", nil)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("count of a file = %d, want 400: %s", resp.StatusCode, raw)
+	}
+}
+
 func TestSpaceReportsUsageAndQuota(t *testing.T) {
 	c := newClient(t)
 	c.setUp() // admin krishna

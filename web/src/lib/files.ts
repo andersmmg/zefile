@@ -205,6 +205,19 @@ export function categoryLabel(entry: Entry): string {
   return CATEGORY_BY_EXTENSION[entry.name.slice(dot + 1).toLowerCase()] ?? 'Other'
 }
 
+/** childLabel describes what sits directly inside a folder: "3 folders · 2
+ *  files", or "Empty" when nothing does. A count that has not arrived — or
+ *  could not be fetched — has no label: a placeholder is not an answer. */
+export function childLabel(count: { files: number; dirs: number } | null | undefined): string {
+  if (!count) return ''
+  const parts: string[] = []
+  if (count.dirs === 1) parts.push('1 folder')
+  else if (count.dirs > 1) parts.push(`${count.dirs} folders`)
+  if (count.files === 1) parts.push('1 file')
+  else if (count.files > 1) parts.push(`${count.files} files`)
+  return parts.length > 0 ? parts.join(' · ') : 'Empty'
+}
+
 const relative = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
 const STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['year', 31_536_000],
@@ -216,10 +229,12 @@ const STEPS: [Intl.RelativeTimeFormatUnit, number][] = [
 ]
 
 /** formatRelativeTime renders a timestamp the way a file manager does — "2 days
- *  ago" — because an exact date is rarely what someone is scanning for. */
+ *  ago" — because an exact date is rarely what someone is scanning for.
+ *
+ *  Empty if there isn't a saveed time. */
 export function formatRelativeTime(iso: string): string {
   const then = new Date(iso).getTime()
-  if (Number.isNaN(then)) return ''
+  if (Number.isNaN(then) || then <= 0) return ''
   const seconds = Math.round((Date.now() - then) / 1000)
   for (const [unit, size] of STEPS) {
     if (Math.abs(seconds) >= size) return relative.format(-Math.round(seconds / size), unit)

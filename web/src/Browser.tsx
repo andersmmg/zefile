@@ -108,11 +108,12 @@ import {
   type ColorId
 } from '@/lib/colors'
 import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
-import { canThumb, categoryLabel, entryKind, formatRelativeTime, isMembersTop, shortName } from '@/lib/files'
+import { canThumb, categoryLabel, childLabel, entryKind, formatRelativeTime, isMembersTop, shortName } from '@/lib/files'
 import { Empty } from './App'
 import {
   api,
   ApiError,
+  type ChildCount,
   formatSize,
   joinPath,
   parentOf,
@@ -219,6 +220,7 @@ type EntryActions = {
   contextTarget: (entry: Entry) => void
   setColor: (entry: Entry, color: ColorId | null) => void
   isSelected: (entry: Entry) => boolean
+  childCount: (path: string) => ChildCount | null | undefined
   selectBox: (paths: string[]) => void
   selectedPaths: () => string[]
   isShared: (entry: Entry) => boolean
@@ -326,6 +328,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const [inlinePreview, setInlinePreview] = useState(false)
   const [objectStorage, setObjectStorage] = useState(false)
   const [urlFetch, setUrlFetch] = useState(false)
+  const [counts, setCounts] = useState<Record<string, ChildCount | null>>({})
   const [version, setVersion] = useState('')
   const [sharedPaths, setSharedPaths] = useState<Set<string>>(() => new Set())
   const [clipboard, setClipboard] = useState<Clipboard | null>(null)
@@ -417,6 +420,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     // Navigating shows the spinner, never the previous folder: same-folder
     // refreshes stay silent and update in place (see load's silent mode).
     setEntries([])
+    setCounts({})
     void load(path)
     clearSelection()
     setPreview(null)
@@ -729,6 +733,29 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     [inSearch, searchResults, entries],
   )
 
+  useEffect(() => {
+    if (inSearch) return
+    const pending = entries.filter((e) => e.is_dir && counts[e.path] === undefined)
+    if (pending.length === 0) return
+    let live = true
+    void runPool(
+      pending.map(
+        (entry) => async () => {
+          try {
+            const c = await api.count(entry.path)
+            if (live) setCounts((cur) => ({ ...cur, [entry.path]: c }))
+          } catch {
+            if (live) setCounts((cur) => ({ ...cur, [entry.path]: null }))
+          }
+        },
+      ),
+      6,
+    )
+    return () => {
+      live = false
+    }
+  }, [entries, counts, inSearch])
+
   const groups = useMemo(() => buildGroups(matched, group, sort), [matched, group, sort])
   const ordered = useMemo(() => groups.flatMap((g) => g.entries), [groups])
   const listRows = useMemo(() => flattenGroups(groups), [groups])
@@ -891,6 +918,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     share: (entry) => setDialog({ kind: 'share', entry }),
     manageAccess: (entry) => setDialog({ kind: 'access', entry }),
     info: (entry) => setDialog({ kind: 'info', entry }),
+    childCount: (path) => counts[path],
     canManageAccess: user.is_admin,
     copy: (entry) => setClipboard({ mode: 'copy', entries: clipboardTargets(entry) }),
     cut: (entry) => setClipboard({ mode: 'cut', entries: clipboardTargets(entry) }),
@@ -2426,11 +2454,11 @@ function ListRow({
         </span>
 
         <span className="text-right text-xs tabular-nums text-muted-foreground">
-          {entry.is_dir ? '—' : formatSize(entry.size)}
+          {entry.is_dir ? childLabel(actions.childCount(entry.path)) || '—' : formatSize(entry.size)}
         </span>
 
         <span className="text-right text-xs text-muted-foreground">
-          {formatRelativeTime(entry.mod_time)}
+          {formatRelativeTime(entry.mod_time) || '—'}
         </span>
 
         <div className="flex items-center justify-end opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
@@ -2664,8 +2692,8 @@ function GridTile({
               {locationLabel(entry.path)}
             </p>
           ) : (
-            <p className="text-xs tabular-nums text-muted-foreground">
-              {entry.is_dir ? '—' : formatSize(entry.size)}
+            <p className="truncate text-xs tabular-nums text-muted-foreground">
+              {entry.is_dir ? childLabel(actions.childCount(entry.path)) : formatSize(entry.size)}
             </p>
           )}
         </div>
