@@ -16,7 +16,7 @@ import {
   type Icon,
 } from '@phosphor-icons/react'
 
-import type { Entry } from '@/api'
+import type { Entry, PermSet } from '@/api'
 
 /** character budget for a file name shown in the browser before they
  * will be truncated
@@ -103,6 +103,18 @@ export function isMembersTop(path: string): boolean {
   const cut = path.lastIndexOf('/')
   const parent = cut <= 0 ? '/' : path.slice(0, cut)
   return parent === '/members'
+}
+
+/** entryPerms is the caller's permissions as they actually apply to one
+ *  entry. All in one place. */
+export function entryPerms(entry: Entry, perms: PermSet): PermSet {
+  if (isMembersTop(entry.path)) return { ...perms, delete: false }
+  return perms
+}
+
+/** displayName is how an entry is titled in the UI, for special cases. */
+export function displayName(entry: Pick<Entry, 'name' | 'path'>): string {
+  return entry.path === '/members' ? 'Members' : entry.name
 }
 
 /** entryKind picks the icon and colour for an entry by its extension. */

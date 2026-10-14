@@ -108,7 +108,7 @@ import {
   type ColorId
 } from '@/lib/colors'
 import { clearDragGhost, dropEntries, installDragGhost, readEntries } from '@/lib/dnd'
-import { canThumb, categoryLabel, childLabel, entryKind, formatRelativeTime, isMembersTop, shortName } from '@/lib/files'
+import { canThumb, categoryLabel, childLabel, displayName, entryKind, entryPerms, formatRelativeTime, shortName } from '@/lib/files'
 import { Empty } from './App'
 import {
   api,
@@ -1070,14 +1070,15 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       }
       if (e.key === 'F2' && selected.length === 1) {
         const target = selected[0]!
-        if (perms.write && perms.delete && !isMembersTop(target.path)) {
+        const p = entryPerms(target, perms)
+        if (p.write && p.delete) {
           e.preventDefault()
           setRenaming(target.path)
         }
         return
       }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selected.length > 0) {
-        if (perms.delete && !selected.some((en) => isMembersTop(en.path))) {
+        if (selected.every((en) => entryPerms(en, perms).delete)) {
           e.preventDefault()
           setDialog({ kind: 'delete', entries: selected })
         }
@@ -1103,7 +1104,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         e.preventDefault()
         setClipboard({ mode: 'copy', entries: selected })
       } else if (key === 'x' && selected.length > 0) {
-        if (selected.some((e) => isMembersTop(e.path))) return
+        if (!selected.every((e) => entryPerms(e, perms).delete)) return
         e.preventDefault()
         setClipboard({ mode: 'cut', entries: selected })
       } else if (key === 'v' && clipboard) {
@@ -1269,6 +1270,8 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   }
 
   const onlyOne = selected.length === 1 ? selected[0]! : null
+  const one = onlyOne ? entryPerms(onlyOne, perms) : null
+  const everySelected = selected.every((en) => entryPerms(en, perms).delete)
   const canCreateHere = perms.write && path !== '/members'
 
   // empty-area create menu depending on whether the caller can write here.
@@ -1427,7 +1430,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   Download
                 </Button>
               )}
-              {onlyOne && perms.write && perms.delete && !isMembersTop(onlyOne.path) && (
+              {onlyOne && one && one.write && one.delete && (
                 <Button variant="ghost" size="sm" onClick={() => actions.rename(onlyOne)}>
                   <PencilSimpleIcon />
                   Rename
@@ -1446,7 +1449,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   Copy
                 </Button>
               )}
-              {perms.delete && !selected.some((e) => isMembersTop(e.path)) && (
+              {everySelected && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1459,7 +1462,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   Move
                 </Button>
               )}
-              {perms.delete && !selected.some((e) => isMembersTop(e.path)) && (
+              {everySelected && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1786,14 +1789,14 @@ function BoxOverlay({ rect, fading }: { rect: BoxRect; fading: boolean }) {
  * row's horizontal bar.
  */
 function moveDragProps(entry: Entry, actions: EntryActions, variant: 'tile' | 'row' = 'tile') {
-  const managed = isMembersTop(entry.path)
+  const p = entryPerms(entry, actions.perms)
   const isTarget = entry.is_dir && actions.dropTarget === entry.path
   const renaming = actions.renaming === entry.path
   return {
     isTarget,
-    draggable: !managed && !renaming,
+    draggable: p.delete && !renaming,
     onDragStart: (e: DragEvent) => {
-      if (managed) return
+      if (!p.delete) return
       const paths = actions.dragPaths(entry)
       e.dataTransfer.setData(MOVE_MIME, JSON.stringify(paths))
       e.dataTransfer.effectAllowed = 'move'
@@ -1995,7 +1998,7 @@ function Breadcrumb({
               onClick={() => onNavigate(target)}
               {...(target === path ? {} : dropFor(target, segment))}
             >
-              {segment}
+              {displayName({ name: segment, path: target })}
             </Button>
           </div>
         )
@@ -2016,15 +2019,14 @@ function Breadcrumb({
 }
 
 function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryActions; children: ReactNode }) {
-  const p = actions.perms
-  const managed = isMembersTop(entry.path)
+  const p = entryPerms(entry, actions.perms)
   const share = p.share
   const manage = actions.canManageAccess
   const copy = p.read
-  const cut = p.delete && !managed
+  const cut = p.delete
   const paste = actions.canPaste && p.write
-  const rename = p.write && p.delete && !managed
-  const remove = p.delete && !managed
+  const rename = p.write && p.delete
+  const remove = p.delete
   return (
     <ContextMenu>
       <ContextMenuTrigger
@@ -2438,8 +2440,8 @@ function ListRow({
                 className="h-7 min-w-0 flex-1 rounded border border-primary bg-background px-2 text-sm outline-none"
               />
             ) : (
-              <span className="truncate text-sm" title={entry.name}>
-                  {entry.name}
+              <span className="truncate text-sm" title={displayName(entry)}>
+                  {displayName(entry)}
               </span>
             )}
             {shared && (
@@ -2476,7 +2478,7 @@ function ListRow({
               <DownloadSimpleIcon />
             </Button>
           )}
-          {actions.perms.delete && !isMembersTop(entry.path) && (
+          {entryPerms(entry, actions.perms).delete && (
             <Button
               variant="ghost"
               size="icon"
@@ -2682,9 +2684,9 @@ function GridTile({
           ) : (
             <p
               className={`line-clamp-2 wrap-anywhere text-sm inline-block px-2 max-w-full rounded-md ${tint ?? 'bg-none'}`}
-              title={entry.name}
+              title={displayName(entry)}
             >
-              {shortName(entry.name)}
+              {shortName(displayName(entry))}
             </p>
           )}
           {showLocation ? (

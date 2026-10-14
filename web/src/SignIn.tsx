@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useId, useState, type SubmitEvent, type ReactNode } from 'react'
 
 import { api, ApiError } from './api'
 import { Button } from '@/components/ui/button'
@@ -119,7 +119,7 @@ export function SignIn({ mode, onDone }: Props) {
     setErrors((current) => ({ ...current, [field]: found[field] }))
   }
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault()
 
     const found = validate()
@@ -399,7 +399,7 @@ function ResetCard({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(false)
 
-  async function submit(event: FormEvent) {
+  async function submit(event: SubmitEvent) {
     event.preventDefault()
     const found: ResetErrors = {}
     if (!username.trim()) found.username = 'Enter your username.'

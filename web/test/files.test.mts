@@ -1,7 +1,8 @@
 // character-limit truncation of displayed file names
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { childLabel, formatRelativeTime, NAME_LIMIT, shortName } from '../src/lib/files.ts'
+import { childLabel, displayName, entryPerms, formatRelativeTime, NAME_LIMIT, shortName } from '../src/lib/files.ts'
+import type { Entry, PermSet } from '../src/api.ts'
 
 describe('formatRelativeTime', () => {
   it('renders a real timestamp relatively', () => {
@@ -72,5 +73,41 @@ describe('shortName', () => {
   it('honours a custom limit, giving the extension the tail', () => {
     assert.equal(shortName('abcdefghij.jpg', 8).length, 8)
     assert.equal(shortName('abcdefghij.jpg', 8), 'a....jpg')
+  })
+})
+
+const ALL: PermSet = { read: true, write: true, delete: true, share: true, manage: true }
+
+// entryPerms only reads the path, so a path is enough to stand in for an entry.
+const at = (path: string): Entry =>
+  ({ name: path.slice(path.lastIndexOf('/') + 1) || '/', path, is_dir: true }) as Entry
+
+describe('entryPerms', () => {
+  it('passes an ordinary entry the caller\'s permissions untouched', () => {
+    assert.equal(entryPerms(at('/photos'), ALL), ALL)
+  })
+
+  it('strips delete from the managed members structure, keeping the rest', () => {
+    // Callers express rename as write && delete and move as delete, so
+    // dropping delete is what forbids renaming, moving and deleting these.
+    for (const path of ['/members', '/members/alice']) {
+      assert.deepEqual(entryPerms(at(path), ALL), { ...ALL, delete: false })
+    }
+  })
+
+  it('still passes the caller\'s own limits through on members children', () => {
+    const readOnly: PermSet = { ...ALL, write: false, delete: false }
+    assert.deepEqual(entryPerms(at('/members/alice'), readOnly), readOnly)
+  })
+})
+
+describe('displayName', () => {
+  it('capitalizes the managed members folder', () => {
+    assert.equal(displayName(at('/members')), 'Members')
+  })
+
+  it('keeps every other name exactly as stored', () => {
+    assert.equal(displayName(at('/members/alice')), 'alice')
+    assert.equal(displayName(at('/photos/holiday.png')), 'holiday.png')
   })
 })
