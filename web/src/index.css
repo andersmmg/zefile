@@ -43,11 +43,11 @@
 .dark {
   /* Dark mode: the seed itself is the accent (it is already a light colour),
    * with surfaces as the seed sunk into black and inks lifted toward white. */
-  --background: color-mix(in oklch, var(--seed) 24%, black);
+  --background: color-mix(in oklch, var(--seed) 15%, black);
   --foreground: color-mix(in oklch, var(--seed) 18%, white);
   --card: color-mix(in oklch, var(--seed) 30%, black);
   --card-foreground: var(--foreground);
-  --popover: color-mix(in oklch, var(--seed) 30%, black);
+  --popover: color-mix(in oklch, var(--seed) 25%, black);
   --popover-foreground: var(--foreground);
   --primary: var(--seed);
   --primary-foreground: color-mix(in oklch, var(--seed) 31%, black);
@@ -59,8 +59,8 @@
   --accent-foreground: color-mix(in oklch, var(--foreground) 90%, var(--background));
   --destructive: #e5484d;
   --destructive-foreground: #ffffff;
-  --border: color-mix(in oklch, var(--foreground) 16%, var(--background));
-  --input: color-mix(in oklch, var(--foreground) 16%, var(--background));
+  --border: color-mix(in oklch, var(--foreground) 20%, var(--background));
+  --input: color-mix(in oklch, var(--foreground) 20%, var(--background));
   --ring: var(--primary);
 
   --brand: color-mix(in oklch, var(--seed) 70%, white);
