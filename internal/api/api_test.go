@@ -29,9 +29,11 @@ import (
 	"github.com/krishna2206/zefile/internal/auth"
 	"github.com/krishna2206/zefile/internal/checksum"
 	entrycolor "github.com/krishna2206/zefile/internal/color"
+	"github.com/krishna2206/zefile/internal/content"
 	"github.com/krishna2206/zefile/internal/db"
 	"github.com/krishna2206/zefile/internal/job"
 	"github.com/krishna2206/zefile/internal/quota"
+	"github.com/krishna2206/zefile/internal/reference"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
 	"github.com/krishna2206/zefile/internal/thumb"
@@ -101,6 +103,11 @@ func newClient(t *testing.T, mutate ...func(*api.Options)) *client {
 		return engine.SetOwner(ctx, to, p.UserID)
 	})
 	checksums := checksum.New(database, fs)
+
+	signer, err := content.NewSigner()
+	if err != nil {
+		t.Fatalf("new signer: %v", err)
+	}
 	jobs.Register(job.TypeChecksum, func(ctx context.Context, payload string, _ func(done, total int64)) error {
 		var p checksum.Payload
 		if err := json.Unmarshal([]byte(payload), &p); err != nil {
@@ -135,8 +142,10 @@ func newClient(t *testing.T, mutate ...func(*api.Options)) *client {
 		Checksums:     checksums,
 		Audit:         audit.New(database),
 		ContentBase:   "https://content.example",
+		Signer:        signer,
 		SecureCookies: false,
 		Colors:        entrycolor.New(database),
+		References:    reference.New(database),
 	}
 	for _, m := range mutate {
 		m(&opts)
@@ -234,6 +243,7 @@ type entry struct {
 	Size  int64  `json:"size"`
 	IsDir bool   `json:"is_dir"`
 	Color string `json:"color,omitempty"`
+	Ref   string `json:"ref,omitempty"`
 }
 
 type listing struct {

@@ -56,6 +56,9 @@ type Querier interface {
 	DeleteMetaSyncSubtree(ctx context.Context, path string) error
 	// Regenerating replaces the whole set, so the old codes are cleared first.
 	DeleteRecoveryCodesForUser(ctx context.Context, userID int64) error
+	DeleteReference(ctx context.Context, arg DeleteReferenceParams) (int64, error)
+	// Prefix comparison rather than LIKE, so names holding % or _ need no escaping.
+	DeleteReferencesSubtree(ctx context.Context, path string) error
 	DeleteTrash(ctx context.Context, id int64) error
 	DeleteUnusedInvitations(ctx context.Context) error
 	DeleteUpload(ctx context.Context, id int64) error
@@ -81,6 +84,8 @@ type Querier interface {
 	GetInvitationByTokenHash(ctx context.Context, arg GetInvitationByTokenHashParams) (Invitation, error)
 	GetJob(ctx context.Context, id int64) (Job, error)
 	GetMetaSync(ctx context.Context, path string) (MetaSync, error)
+	// One query for results spanning many folders.
+	GetReferencesForPaths(ctx context.Context, arg GetReferencesForPathsParams) ([]GetReferencesForPathsRow, error)
 	// The lookup performed on every authenticated request. Expiry and revocation
 	// are filtered here rather than in Go: a caller that forgets the check must not
 	// be able to resurrect a dead session.
@@ -124,6 +129,7 @@ type Querier interface {
 	// Setup tokens have no inviter and are excluded.
 	ListPendingInvitations(ctx context.Context, expiresAt int64) ([]Invitation, error)
 	ListRecentJobs(ctx context.Context, limit int64) ([]Job, error)
+	ListReferences(ctx context.Context, arg ListReferencesParams) ([]ListReferencesRow, error)
 	ListSessionsForUser(ctx context.Context, arg ListSessionsForUserParams) ([]Session, error)
 	ListSharesByOwner(ctx context.Context, ownerID int64) ([]Share, error)
 	// Most recently deleted first: that is the order someone reaches for the trash
@@ -157,6 +163,9 @@ type Querier interface {
 	// Follows a rename like MoveFileMetaSubtree, so a moved directory keeps
 	// its fresh listing instead of paying a re-list on next open.
 	MoveMetaSyncSubtree(ctx context.Context, arg MoveMetaSyncSubtreeParams) error
+	// A renamed subtree keeps its references, and the stored parent is rewritten with
+	// it so the directory lookup stays correct underneath.
+	MoveReferencesSubtree(ctx context.Context, arg MoveReferencesSubtreeParams) error
 	RemoveGroupMember(ctx context.Context, arg RemoveGroupMemberParams) error
 	// A job left 'running' by a crash is reset so the worker picks it up again on
 	// the next start; its own idempotent construction makes the retry safe.
@@ -177,6 +186,7 @@ type Querier interface {
 	SetEntryColor(ctx context.Context, arg SetEntryColorParams) error
 	SetFileOwner(ctx context.Context, arg SetFileOwnerParams) error
 	SetMetaSync(ctx context.Context, arg SetMetaSyncParams) error
+	SetReference(ctx context.Context, arg SetReferenceParams) error
 	// Sets or clears (NULL) the TOTP secret. A non-NULL secret means two-factor
 	// authentication is enabled for the account.
 	SetTOTPSecret(ctx context.Context, arg SetTOTPSecretParams) error
@@ -192,6 +202,10 @@ type Querier interface {
 	TouchAPIToken(ctx context.Context, arg TouchAPITokenParams) error
 	TouchSession(ctx context.Context, arg TouchSessionParams) error
 	UpdateJobProgress(ctx context.Context, arg UpdateJobProgressParams) error
+	// Follows a rename for every user: a reference pointing into the moved subtree
+	// is rewritten to the new location. This is what makes a reference keep
+	// tracking its target across a move.
+	UpdateReferencesTargetSubtree(ctx context.Context, arg UpdateReferencesTargetSubtreeParams) error
 	UpdateUploadOffset(ctx context.Context, arg UpdateUploadOffsetParams) error
 	UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error
 	UpsertACL(ctx context.Context, arg UpsertACLParams) (Acl, error)

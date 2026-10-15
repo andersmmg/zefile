@@ -32,6 +32,7 @@ import (
 	"github.com/krishna2206/zefile/internal/job"
 	"github.com/krishna2206/zefile/internal/metacache"
 	"github.com/krishna2206/zefile/internal/quota"
+	"github.com/krishna2206/zefile/internal/reference"
 	"github.com/krishna2206/zefile/internal/settings"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
@@ -234,6 +235,7 @@ func run() error {
 	checksums := checksum.New(database, fs)
 	settingsSvc := settings.New(database)
 	colors := color.New(database)
+	references := reference.New(database)
 
 	// Offline IP-to-place lookup for the sessions screen. The published image
 	// ships a database at the second path; a from-source run without one falls
@@ -298,6 +300,7 @@ func run() error {
 		Thumbs:          thumbs,
 		Quota:           quotas,
 		Colors:          colors,
+		References:      references,
 	}).Handler()
 
 	contentHandler := content.New(content.Options{

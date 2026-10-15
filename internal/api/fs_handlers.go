@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/krishna2206/zefile/internal/acl"
 	"github.com/krishna2206/zefile/internal/audit"
 	"github.com/krishna2206/zefile/internal/color"
 	"github.com/krishna2206/zefile/internal/content"
@@ -24,14 +25,23 @@ type entryResponse struct {
 	IsDir   bool      `json:"is_dir"`
 	Symlink bool      `json:"symlink,omitempty"`
 	Color   string    `json:"color,omitempty"`
+	Ref     string    `json:"ref,omitempty"`
 }
 
-func (s *Server) attachColors(r *http.Request, entries []entryResponse, dir string) {
-	if s.colors == nil || len(entries) == 0 {
+func (s *Server) attachMeta(r *http.Request, entries []entryResponse, dir string) {
+	if len(entries) == 0 {
 		return
 	}
 	c, ok := callerFrom(r.Context())
 	if !ok {
+		return
+	}
+
+	s.attachColors(r, c.user.ID, entries, dir)
+}
+
+func (s *Server) attachColors(r *http.Request, userID int64, entries []entryResponse, dir string) {
+	if s.colors == nil {
 		return
 	}
 
@@ -40,13 +50,13 @@ func (s *Server) attachColors(r *http.Request, entries []entryResponse, dir stri
 		err   error
 	)
 	if dir != "" {
-		found, err = s.colors.ForDirectory(r.Context(), c.user.ID, dir)
+		found, err = s.colors.ForDirectory(r.Context(), userID, dir)
 	} else {
 		paths := make([]string, 0, len(entries))
 		for _, entry := range entries {
 			paths = append(paths, entry.Path)
 		}
-		found, err = s.colors.ForPaths(r.Context(), c.user.ID, paths)
+		found, err = s.colors.ForPaths(r.Context(), userID, paths)
 	}
 	if err != nil {
 		return
@@ -56,6 +66,59 @@ func (s *Server) attachColors(r *http.Request, entries []entryResponse, dir stri
 			entries[i].Color = id
 		}
 	}
+}
+
+func (s *Server) injectReferences(r *http.Request, out []entryResponse, dir storage.Path) []entryResponse {
+	if s.references == nil {
+		return out
+	}
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		return out
+	}
+	refs, err := s.references.ForDirectory(r.Context(), c.user.ID, dir.String())
+	if err != nil {
+		return out
+	}
+	for path, target := range refs {
+		tp, err := storage.ParsePath(target)
+		if err != nil {
+			continue
+		}
+		ref := entryResponse{
+			Path:    path,
+			Name:    storage.MustParsePath(path).Name(),
+			ModTime: time.Now().UTC(),
+		}
+		if info, err := s.fs.Stat(r.Context(), tp); err == nil {
+			ref = toEntryResponse(info)
+			ref.Path = path
+			ref.Name = storage.MustParsePath(path).Name()
+			ref.Ref = target
+		}
+		out = append(out, ref)
+	}
+	return out
+}
+
+// maps a reference path to the path it points at for the caller
+func (s *Server) resolveReference(r *http.Request, p storage.Path) storage.Path {
+	if s.references == nil {
+		return p
+	}
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		return p
+	}
+	target, found, err := s.references.Get(r.Context(), c.user.ID, p.String())
+	if err != nil || !found {
+		return p
+	}
+	tp, err := storage.ParsePath(target)
+	if err != nil {
+		return p
+	}
+	return tp
 }
 
 type listResponse struct {
@@ -68,6 +131,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	p = s.resolveReference(r, p)
 
 	entries, err := s.fs.List(r.Context(), p)
 	if err != nil {
@@ -94,7 +158,8 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	for _, entry := range entries {
 		out = append(out, toEntryResponse(entry))
 	}
-	s.attachColors(r, out, p.String())
+	out = s.injectReferences(r, out, p)
+	s.attachMeta(r, out, p.String())
 	writeJSON(w, r, http.StatusOK, listResponse{Path: p.String(), Entries: out})
 }
 
@@ -108,13 +173,14 @@ func (s *Server) handleCount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	p = s.resolveReference(r, p)
 
 	entries, err := s.fs.List(r.Context(), p)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
-	var out countResponse
+	out := countResponse{}
 	for _, entry := range entries {
 		if entry.IsDir {
 			out.Dirs++
@@ -122,7 +188,32 @@ func (s *Server) handleCount(w http.ResponseWriter, r *http.Request) {
 			out.Files++
 		}
 	}
+	s.countReferences(r, p, &out)
 	writeJSON(w, r, http.StatusOK, out)
+}
+
+// adds the caller's references in dir to a folder's total
+func (s *Server) countReferences(r *http.Request, dir storage.Path, out *countResponse) {
+	if s.references == nil {
+		return
+	}
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		return
+	}
+	refs, err := s.references.ForDirectory(r.Context(), c.user.ID, dir.String())
+	if err != nil {
+		return
+	}
+	for _, target := range refs {
+		if tp, err := storage.ParsePath(target); err == nil {
+			if info, err := s.fs.Stat(r.Context(), tp); err == nil && info.IsDir {
+				out.Dirs++
+				continue
+			}
+		}
+		out.Files++
+	}
 }
 
 func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +228,7 @@ func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := toEntryResponse(info)
-	s.attachColors(r, []entryResponse{out}, p.Parent().String())
+	s.attachMeta(r, []entryResponse{out}, p.Parent().String())
 	writeJSON(w, r, http.StatusOK, out)
 }
 
@@ -159,21 +250,22 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := s.fs.Stat(r.Context(), p)
+	target := s.resolveReference(r, p)
+	info, err := s.fs.Stat(r.Context(), target)
 	if err != nil {
 		writeError(w, r, err)
 		return
 	}
 	out := fileInfoResponse{
-		Path:    info.Path.String(),
-		Name:    info.Name,
+		Path:    p.String(),
+		Name:    p.Name(),
 		IsDir:   info.IsDir,
 		Symlink: info.Symlink,
 		Size:    info.Size,
 		ModTime: info.ModTime.UTC(),
 	}
 
-	own, found, err := s.acl.OwnershipOf(r.Context(), p)
+	own, found, err := s.acl.OwnershipOf(r.Context(), target)
 	if err != nil {
 		writeError(w, r, err)
 		return
@@ -233,6 +325,101 @@ func (s *Server) handleSetColor(w http.ResponseWriter, r *http.Request) {
 	}{Color: body.Color})
 }
 
+type referenceRequest struct {
+	Path   string `json:"path"`
+	Target string `json:"target"`
+}
+
+func (s *Server) handleSetReference(w http.ResponseWriter, r *http.Request) {
+	var body referenceRequest
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	p, ok := parsePath(w, r, body.Path)
+	if !ok {
+		return
+	}
+	target, ok := parsePath(w, r, body.Target)
+	if !ok {
+		return
+	}
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
+	if s.references == nil {
+		writeProblem(w, r, http.StatusNotImplemented, CodeBadRequest,
+			"References unavailable", "This server does not store references.")
+		return
+	}
+
+	// reference must be to a readable file
+	if _, err := s.fs.Stat(r.Context(), target); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if allowed, err := s.acl.Allows(r.Context(), acl.PermRead, target); err != nil || !allowed {
+		writeProblem(w, r, http.StatusForbidden, CodePermissionDenied,
+			"Cannot reference that", "You cannot read the target, so you cannot link to it.")
+		return
+	}
+	if !guardMembersTop(w, r, p) {
+		return
+	}
+
+	// Check if the reference already exists
+	_, exists, err := s.references.Get(r.Context(), c.user.ID, p.String())
+	if err != nil {
+		writeError(w, r, err)
+		return
+	}
+	if exists {
+		writeProblem(w, r, http.StatusConflict, CodeConflict,
+			"Already exists", "A reference is already there.")
+		return
+	}
+	if err := s.references.Set(r.Context(), c.user.ID, p.String(), p.Parent().String(), target.String()); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	// Get the target's info to return it
+	info, err := s.fs.Stat(r.Context(), target)
+	if err != nil {
+		_ = s.references.Clear(r.Context(), c.user.ID, p.String())
+		writeError(w, r, err)
+		return
+	}
+	out := toEntryResponse(info)
+	out.Path = p.String()
+	out.Name = p.Name()
+	out.Ref = target.String()
+	writeJSON(w, r, http.StatusCreated, out)
+}
+
+// removes a reference
+func (s *Server) handleClearReference(w http.ResponseWriter, r *http.Request) {
+	p, ok := pathParam(w, r)
+	if !ok {
+		return
+	}
+	c, ok := callerFrom(r.Context())
+	if !ok {
+		writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+		return
+	}
+	if s.references == nil {
+		writeProblem(w, r, http.StatusNotImplemented, CodeBadRequest,
+			"References unavailable", "This server does not store references.")
+		return
+	}
+	if err := s.references.Clear(r.Context(), c.user.ID, p.String()); err != nil {
+		writeError(w, r, err)
+		return
+	}
+	writeJSON(w, r, http.StatusNoContent, nil)
+}
+
 type pathRequest struct {
 	Path string `json:"path"`
 }
@@ -285,6 +472,43 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// only move the reference
+	if s.references != nil {
+		c, ok := callerFrom(r.Context())
+		if !ok {
+			writeProblem(w, r, http.StatusUnauthorized, CodeUnauthenticated, "Not signed in", "")
+			return
+		}
+		moved, err := s.references.Move(r.Context(), c.user.ID, from.String(), to.String(), to.Parent().String())
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		if moved {
+			refTarget, _, err := s.references.Get(r.Context(), c.user.ID, to.String())
+			if err != nil {
+				writeError(w, r, err)
+				return
+			}
+			tp, err := storage.ParsePath(refTarget)
+			if err != nil {
+				writeError(w, r, err)
+				return
+			}
+			info, err := s.fs.Stat(r.Context(), tp)
+			if err != nil {
+				writeError(w, r, err)
+				return
+			}
+			out := toEntryResponse(info)
+			out.Path = to.String()
+			out.Name = to.Name()
+			out.Ref = refTarget
+			writeJSON(w, r, http.StatusOK, out)
+			return
+		}
+	}
+
 	if err := s.fs.Move(r.Context(), from, to); err != nil {
 		writeError(w, r, err)
 		return
@@ -300,6 +524,13 @@ func (s *Server) handleMove(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.colors != nil {
 		if err := s.colors.Relocate(r.Context(), from.String(), to.String()); err != nil {
+			writeError(w, r, err)
+			return
+		}
+	}
+	// References follow the rename
+	if s.references != nil {
+		if err := s.references.Relocate(r.Context(), from.String(), to.String()); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -532,6 +763,19 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	if !guardMembersTop(w, r, p) {
 		return
 	}
+	// Deleting a reference removes only the pointer
+	if s.references != nil {
+		removed, err := s.references.ClearIfPresent(r.Context(), c.user.ID, p.String())
+		if err != nil {
+			writeError(w, r, err)
+			return
+		}
+		if removed {
+			s.audit(r, audit.ActionFileTrashed, p.String(), nil)
+			writeJSON(w, r, http.StatusNoContent, nil)
+			return
+		}
+	}
 	if err := s.trash.Trash(r.Context(), c.user.ID, p); err != nil {
 		writeError(w, r, err)
 		return
@@ -544,6 +788,14 @@ func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	// clear non existing file colors
 	if s.colors != nil {
 		if err := s.colors.Forget(r.Context(), p.String()); err != nil {
+			writeError(w, r, err)
+			return
+		}
+	}
+	// references are per user and keyed by path, so a trashed subtree drops
+	// its links rather than leaving rows pointing into nothing
+	if s.references != nil {
+		if err := s.references.Forget(r.Context(), p.String()); err != nil {
 			writeError(w, r, err)
 			return
 		}
@@ -563,6 +815,7 @@ func (s *Server) handleLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	p = s.resolveReference(r, p)
 
 	info, err := s.fs.Stat(r.Context(), p)
 	if err != nil {
@@ -653,6 +906,7 @@ func (s *Server) handleText(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	p = s.resolveReference(r, p)
 	info, err := s.fs.Stat(r.Context(), p)
 	if err != nil {
 		writeError(w, r, err)

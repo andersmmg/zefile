@@ -13,6 +13,7 @@ export type Entry = {
   is_dir: boolean
   symlink?: boolean
   color?: string
+  ref?: string
 }
 
 export type Listing = { path: string; entries: Entry[] }
@@ -342,6 +343,15 @@ export const api = {
 
   mkdir: (path: string) =>
     request<Entry>('/api/v1/fs/dirs', { method: 'POST', body: JSON.stringify({ path }) }),
+
+  setReference: (path: string, target: string) =>
+    request<Entry>('/api/v1/fs/reference', {
+      method: 'PUT',
+      body: JSON.stringify({ path, target }),
+    }),
+
+  clearReference: (path: string) =>
+    request<void>(`/api/v1/fs/reference?path=${encodeURIComponent(path)}`, { method: 'DELETE' }),
 
   move: (from: string, to: string) =>
     request<Entry>('/api/v1/fs/move', { method: 'POST', body: JSON.stringify({ from, to }) }),

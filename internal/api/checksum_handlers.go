@@ -26,6 +26,7 @@ func (s *Server) handleChecksum(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	p = s.resolveReference(r, p)
 
 	cs, cached, err := s.checksums.Cached(r.Context(), p)
 	if err != nil {

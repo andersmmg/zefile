@@ -17,7 +17,7 @@ import {
   HouseIcon,
   InfoIcon,
   KeyIcon,
-  LinkSimpleIcon,
+  LinkIcon,
   ListIcon,
   MagnifyingGlassIcon,
   PaletteIcon,
@@ -26,6 +26,7 @@ import {
   PlayIcon,
   ProhibitIcon,
   ScissorsIcon,
+  ShareIcon,
   ShareNetworkIcon,
   SlidersHorizontalIcon,
   SquaresFourIcon,
@@ -201,6 +202,8 @@ function parseLocation(): { screen: Screen; path: string | null } {
 type EntryActions = {
   select: (entry: Entry, intent: ClickIntent) => void
   open: (entry: Entry) => void
+  goToOriginal: (entry: Entry) => void
+  completeReveal: () => void
   download: (entry: Entry) => void
   downloadZip: (entry: Entry) => void
   checksum: (entry: Entry) => void
@@ -212,6 +215,7 @@ type EntryActions = {
   copy: (entry: Entry) => void
   cut: (entry: Entry) => void
   paste: () => void
+  pasteRef: () => void
   rename: (entry: Entry) => void
   renaming: string | null
   commitRename: (entry: Entry, name: string) => void
@@ -225,6 +229,7 @@ type EntryActions = {
   selectedPaths: () => string[]
   isShared: (entry: Entry) => boolean
   canPaste: boolean
+  canPasteRef: boolean
   // Permissions in the current folder, applied to its entries so the menus offer
   // only what the caller can actually do.
   perms: PermSet
@@ -350,6 +355,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const pathRef = useRef(path)
   pathRef.current = path
   const lastRefreshAt = useRef(Date.now())
+  const revealRef = useRef<{ dir: string; path: string } | null>(null)
 
   useEffect(() => {
     localStorage.setItem(
@@ -390,6 +396,13 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
       const listing = await api.list(target)
       setEntries(listing.entries)
       lastRefreshAt.current = Date.now()
+      const reveal = revealRef.current
+      if (reveal && reveal.dir === target) {
+        revealRef.current = null
+        setSelection(new Set([reveal.path]))
+        setAnchor(reveal.path)
+        focusEntry(reveal.path)
+      }
     } catch (err) {
       if (silent) return // a transient refresh failure must not blank the view
       setEntries([])
@@ -397,7 +410,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     } finally {
       if (!silent) setLoading(false)
     }
-  }, [])
+  }, [focusEntry])
 
   const refreshSpace = useCallback(async () => {
     try {
@@ -906,10 +919,28 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     select: selectEntry,
     open: (entry) => {
       if (entry.is_dir) {
-        setPath(entry.path)
+        setPath(entry.ref ?? entry.path)
         setQuery('') // opening a folder leaves search and shows that folder
       } else setPreview(entry) // files always open the preview; the overlay
       // owns the download button, so nothing downloads unasked
+    },
+    goToOriginal: (entry) => {
+      const target = entry.ref
+      if (!target) return // not a reference
+      const dir = parentOf(target)
+      setQuery('')
+      revealRef.current = { dir, path: target }
+      if (dir === path) return // completeReveal picks it up as the menu closes
+      setPath(dir)
+    },
+    completeReveal: () => {
+      const reveal = revealRef.current
+      if (!reveal) return
+      if (reveal.dir !== pathRef.current) return
+      if (!entries.some((e) => e.path === reveal.path)) return
+      revealRef.current = null
+      selectBox([reveal.path])
+      focusEntry(reveal.path)
     },
     download,
     downloadZip: (entry) => void downloadZip([entry]),
@@ -923,6 +954,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     copy: (entry) => setClipboard({ mode: 'copy', entries: clipboardTargets(entry) }),
     cut: (entry) => setClipboard({ mode: 'cut', entries: clipboardTargets(entry) }),
     paste: () => void doPaste(),
+    pasteRef: () => void doPasteRef(),
     rename: (entry) => setRenaming(entry.path),
     renaming,
     commitRename,
@@ -956,6 +988,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     selectedPaths: () => [...selection],
     isShared: (entry) => sharedPaths.has(entry.path),
     canPaste: clipboard !== null && path !== '/members',
+    canPasteRef: clipboard !== null && clipboard.mode === 'copy' && clipboard.entries.length === 1 && path !== '/members',
     perms,
     dragPaths: (entry) =>
       selection.has(entry.path) && selected.length > 0 ? selected.map((e) => e.path) : [entry.path],
@@ -1051,6 +1084,31 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     }
   }, [clipboard, entries, path, clearSelection, load, refreshSpace])
 
+  const doPasteRef = useCallback(async () => {
+    const src = clipboard?.mode === 'copy' && clipboard.entries.length === 1 ? clipboard.entries[0]! : null
+    if (!src) return
+    if (path === '/members') {
+      toast.error('The members folder is managed automatically.')
+      return
+    }
+    const name = freeName(src.name, new Set(entries.map((e) => e.name)))
+    const dest = joinPath(path, name)
+    clearSelection()
+    const pending = toast.loading(`Linking “${src.name}”…`)
+    try {
+      const created = await api.setReference(dest, src.path)
+      setEntries((cur) => [...cur, created])
+      toast.success(`Linked “${src.name}”`, { id: pending })
+    } catch (err) {
+      toast.dismiss(pending)
+      toast.error(err instanceof ApiError ? err.message : `Could not link “${src.name}”`)
+      return
+    }
+    setClipboard(null)
+    void load(path, { silent: true })
+    void refreshSpace()
+  }, [clipboard, entries, path, clearSelection, load, refreshSpace])
+
   useEffect(() => {
     if (screen !== 'files') return
     function onKey(e: KeyboardEvent) {
@@ -1095,6 +1153,14 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
         focusEntry(ordered[0]!.path)
         return
       }
+      // ⌘⇧V pastes a reference
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v' && clipboard) {
+        if (clipboard.mode === 'copy' && clipboard.entries.length === 1) {
+          e.preventDefault()
+          void doPasteRef()
+        }
+        return
+      }
       if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
       const key = e.key.toLowerCase()
       if (key === 'a') {
@@ -1114,7 +1180,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [screen, selected, clipboard, doPaste, dialog, preview, perms, ordered, selectBox, path, clearSelection, focusEntry])
+  }, [screen, selected, clipboard, doPaste, doPasteRef, dialog, preview, perms, ordered, selectBox, path, clearSelection, focusEntry])
 
   // Follow background copies: while any job is unfinished, poll each until it
   // settles, then refresh the listing on success or report the failure. The
@@ -1273,6 +1339,7 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
   const one = onlyOne ? entryPerms(onlyOne, perms) : null
   const everySelected = selected.every((en) => entryPerms(en, perms).delete)
   const canCreateHere = perms.write && path !== '/members'
+  const canPasteRef = clipboard !== null && clipboard.mode === 'copy' && clipboard.entries.length === 1 && path !== '/members'
 
   // empty-area create menu depending on whether the caller can write here.
   const browseArea = (
@@ -1513,6 +1580,17 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                   Paste ({clipboard.entries.length})
                 </button>
               )}
+              {clipboard && canCreateHere && canPasteRef && (
+                <button
+                  type="button"
+                  onClick={() => void doPasteRef()}
+                  title="Paste a link to the copied item — a pointer back to the original, not a copy of it"
+                  className="flex items-center gap-1.5 rounded-md border border-primary/40 bg-primary/10 px-2.5 py-1 text-sm text-primary hover:bg-primary/15"
+                >
+                  <LinkIcon className="size-4" />
+                  Paste link
+                </button>
+              )}
               <Button
                 variant="outline"
                 size="icon"
@@ -1569,6 +1647,13 @@ export function Browser({ user, onSignedOut }: { user: User; onSignedOut: () => 
                     Paste ({clipboard.entries.length})
                     <ContextMenuShortcut>⌘V</ContextMenuShortcut>
                   </ContextMenuItem>
+                  {canPasteRef && (
+                    <ContextMenuItem onSelect={() => void doPasteRef()}>
+                      <LinkIcon />
+                      Paste link
+                      <ContextMenuShortcut>⌘⇧V</ContextMenuShortcut>
+                    </ContextMenuItem>
+                  )}
                 </>
               )}
             </ContextMenuContent>
@@ -2027,6 +2112,7 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
   const paste = actions.canPaste && p.write
   const rename = p.write && p.delete
   const remove = p.delete
+  const following = useRef(false)
   return (
     <ContextMenu>
       <ContextMenuTrigger
@@ -2040,7 +2126,15 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
       >
         {children}
       </ContextMenuTrigger>
-      <ContextMenuContent className="w-48">
+      <ContextMenuContent
+        className="w-48"
+        onCloseAutoFocus={(e) => {
+          if (!following.current) return
+          following.current = false
+          e.preventDefault()
+          actions.completeReveal()
+        }}
+      >
         {entry.is_dir ? (
           <ContextMenuItem onSelect={() => actions.open(entry)}>
             <FolderOpenIcon />
@@ -2067,6 +2161,17 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
               </ContextMenuItem>
             )}
           </>
+        )}
+        {entry.ref && (
+          <ContextMenuItem
+            onSelect={() => {
+              following.current = true
+              actions.goToOriginal(entry)
+            }}
+          >
+            <LinkIcon />
+            Go to original
+          </ContextMenuItem>
         )}
         {entry.is_dir && p.read && (
           <ContextMenuItem onSelect={() => actions.downloadZip(entry)}>
@@ -2110,6 +2215,12 @@ function EntryMenu({ entry, actions, children }: { entry: Entry; actions: EntryA
             Paste
             <ContextMenuShortcut>⌘V</ContextMenuShortcut>
           </ContextMenuItem>
+        )}
+        {paste && actions.canPasteRef && (            <ContextMenuItem onSelect={() => actions.pasteRef()}>
+              <LinkIcon />
+              Paste link
+              <ContextMenuShortcut>⌘⇧V</ContextMenuShortcut>
+            </ContextMenuItem>
         )}
 
         <ContextMenuSeparator />
@@ -2224,11 +2335,18 @@ function ListView({ rows, sort, onSort, actions, showLocation, focusPath, focusS
     const idx = rows.findIndex((r) => r.type === 'entry' && r.entry.path === focusPath)
     if (idx < 0) return
     virtualizer.scrollToIndex(idx)
-    const id = requestAnimationFrame(() => {
-      viewport.current
-        ?.querySelector<HTMLElement>(`[data-entry-path="${CSS.escape(focusPath)}"]`)
-        ?.focus({ preventScroll: true })
-    })
+    let id = 0
+    const attempt = (triesLeft: number) => {
+      const el = viewport.current?.querySelector<HTMLElement>(
+        `[data-entry-path="${CSS.escape(focusPath)}"]`,
+      )
+      if (el) {
+        el.focus({ preventScroll: true })
+        return
+      }
+      if (triesLeft > 0) id = requestAnimationFrame(() => attempt(triesLeft - 1))
+    }
+    id = requestAnimationFrame(() => attempt(10))
     return () => cancelAnimationFrame(id)
   }, [focusPath, focusSeq, rows, virtualizer, actions.renaming])
 
@@ -2382,6 +2500,7 @@ function ListRow({
   const swatch = colorHex(entry.color)
   const selected = actions.isSelected(entry)
   const shared = actions.isShared(entry)
+  const linked = entry.ref != null
   const { isTarget, ...drag } = moveDragProps(entry, actions, 'row')
   return (
     <EntryMenu entry={entry} actions={actions}>
@@ -2445,7 +2564,10 @@ function ListRow({
               </span>
             )}
             {shared && (
-              <LinkSimpleIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Shared" />
+              <ShareIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Shared" />
+            )}
+            {linked && (
+              <LinkIcon className="size-3.5 shrink-0 text-muted-foreground" aria-label="Reference" />
             )}
           </span>
           {showLocation && (
@@ -2620,6 +2742,7 @@ function GridTile({
   const frameTint = frameClasses(entry.color)
   const selected = actions.isSelected(entry)
   const shared = actions.isShared(entry)
+  const linked = entry.ref != null
   const { isTarget, ...drag } = moveDragProps(entry, actions)
   return (
     <EntryMenu entry={entry} actions={actions}>
@@ -2670,7 +2793,15 @@ function GridTile({
               className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-background/85 text-primary shadow-sm backdrop-blur-sm"
               title="Shared"
             >
-              <LinkSimpleIcon className="size-3.5" />
+              <ShareIcon className="size-3.5" />
+            </span>
+          )}
+          {linked && (
+            <span
+              className="absolute left-1.5 top-1.5 grid size-6 place-items-center rounded-full bg-background/85 text-primary shadow-sm backdrop-blur-sm"
+              title={`Reference to ${entry.ref}`}
+            >
+              <LinkIcon className="size-3.5" />
             </span>
           )}
         </div>

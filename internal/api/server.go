@@ -13,6 +13,7 @@ import (
 	"github.com/krishna2206/zefile/internal/geoip"
 	"github.com/krishna2206/zefile/internal/job"
 	"github.com/krishna2206/zefile/internal/quota"
+	"github.com/krishna2206/zefile/internal/reference"
 	"github.com/krishna2206/zefile/internal/settings"
 	"github.com/krishna2206/zefile/internal/share"
 	"github.com/krishna2206/zefile/internal/storage"
@@ -49,6 +50,7 @@ type Server struct {
 	thumbs          *thumb.Service
 	quota           *quota.Service
 	colors          *color.Service
+	references      *reference.Service
 }
 
 // Options configures a [Server].
@@ -67,6 +69,8 @@ type Options struct {
 	Settings  *settings.Service
 
 	Colors *color.Service
+
+	References *reference.Service
 
 	// ContentBase is the public origin serving files, without a trailing
 	// slash. In single-origin mode it is the application's own address.
@@ -133,6 +137,7 @@ func New(opts Options) *Server {
 		thumbs:          opts.Thumbs,
 		quota:           opts.Quota,
 		colors:          opts.Colors,
+		references:      opts.References,
 	}
 }
 
@@ -190,6 +195,8 @@ func (s *Server) Handler() http.Handler {
 	authed.HandleFunc("GET /api/v1/fs/space", s.handleSpace)
 	authed.HandleFunc("GET /api/v1/fs/checksum", s.handleChecksum)
 	authed.HandleFunc("PUT /api/v1/fs/color", s.handleSetColor)
+	authed.HandleFunc("PUT /api/v1/fs/reference", s.handleSetReference)
+	authed.HandleFunc("DELETE /api/v1/fs/reference", s.handleClearReference)
 	authed.HandleFunc("GET /api/v1/config", s.handleConfig)
 
 	authed.HandleFunc("GET /api/v1/trash", s.handleTrashList)

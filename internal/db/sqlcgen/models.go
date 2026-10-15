@@ -59,6 +59,13 @@ type EntryColor struct {
 	Color  string
 }
 
+type EntryReference struct {
+	Path   string
+	Parent string
+	UserID int64
+	Target string
+}
+
 type FileCache struct {
 	Path     string
 	Parent   string

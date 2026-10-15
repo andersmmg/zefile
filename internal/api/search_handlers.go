@@ -48,6 +48,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	root = s.resolveReference(r, root)
 
 	limit := searchDefaultLimit
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -102,6 +103,6 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return results[i].Name < results[j].Name
 	})
 
-	s.attachColors(r, results, "")
+	s.attachMeta(r, results, "")
 	writeJSON(w, r, http.StatusOK, searchResponse{Query: query, Results: results, Truncated: truncated})
 }

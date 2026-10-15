@@ -39,6 +39,7 @@ func (s *Server) handleThumb(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	p = s.resolveReference(r, p)
 
 	size := defaultThumbSize
 	if raw := r.URL.Query().Get("s"); raw != "" {

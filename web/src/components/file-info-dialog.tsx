@@ -3,6 +3,7 @@ import { CircleNotchIcon } from '@phosphor-icons/react'
 
 import { api, ApiError, formatSize, parentOf, type Entry, type FileInfo } from '@/api'
 import { canThumb, categoryLabel, entryKind } from '@/lib/files'
+import { LinkIcon } from '@phosphor-icons/react'
 import { COLORS } from '@/lib/colors'
 import { Thumbnail } from '@/components/thumbnail'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -57,6 +58,15 @@ export function FileInfoDialog({ entry, onClose }: { entry: Entry; onClose: () =
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle className="pr-8 break-words">{entry.name}</DialogTitle>
+          {entry.ref && (
+            <p
+              className="flex items-center gap-1.5 text-sm text-muted-foreground"
+              title={`This is a link to ${entry.ref}`}
+            >
+              <LinkIcon className="size-4 shrink-0" aria-hidden />
+              <span className="truncate">Link to {entry.ref}</span>
+            </p>
+          )}
         </DialogHeader>
 
         {canThumb(entry) ? (
