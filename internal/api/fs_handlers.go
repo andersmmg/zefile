@@ -142,7 +142,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	if p.IsRoot() {
 		if c, ok := callerFrom(r.Context()); ok && !c.user.IsAdmin {
 			writeProblem(w, r, http.StatusForbidden, CodePermissionDenied,
-				"No root", "Browse your home instead — the tree root is not visible to members.")
+				"No root", "You are not allowed to access the root directory.")
 			return
 		}
 	}

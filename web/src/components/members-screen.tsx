@@ -404,8 +404,7 @@ function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
         {link ? (
           <div className="space-y-3 py-2">
             <p className="text-sm text-muted-foreground">
-              Send this link to whoever you’re inviting. It works once and expires in 7 days — copy it now, it
-              is shown only here.
+              Send this link to whoever you’re inviting. It works once and expires in 7 days. It won't be shown again.
             </p>
             <div className="flex gap-2">
               <Input
@@ -435,7 +434,7 @@ function InviteDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
                 onChange={(e) => setEmail(e.currentTarget.value)}
               />
               <p className="text-xs text-muted-foreground">
-                A note for your own records — the person still picks their own username.
+                A note for your own records. This email will not be shared with the recipient.
               </p>
             </div>
 

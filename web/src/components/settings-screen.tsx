@@ -209,7 +209,7 @@ function TwoFactorSection({ initiallyEnabled }: { initiallyEnabled: boolean }) {
           <h2 className="text-base font-semibold text-foreground">Two-factor authentication</h2>
           <p className="text-sm text-muted-foreground">
             {enabled
-              ? 'On — an authenticator code is required at sign-in.'
+              ? 'Enabled. An authenticator code is required at sign-in.'
               : 'Require a code from an authenticator app on top of your password.'}
           </p>
         </div>
@@ -569,7 +569,7 @@ function StorageSection() {
             </p>
             <p className="truncate text-xs text-muted-foreground">
               {space.instance_total > 0
-                ? 'Instance quota — uploads past it are refused.'
+                ? 'Instance max storage quota.'
                 : 'No instance quota configured.'}
             </p>
           </div>

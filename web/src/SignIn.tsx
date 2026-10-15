@@ -179,7 +179,7 @@ export function SignIn({ mode, onDone }: Props) {
   const subtitle = setup
     ? 'Let’s create your account.'
     : accept
-      ? 'You’ve been invited — create your account.'
+      ? 'You’ve been invited, create your account.'
       : 'Your files, on your own server.'
 
   return (
@@ -363,9 +363,8 @@ function RecoveryCodesCard({ codes, onDone }: { codes: string[]; onDone: () => v
     <Card>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          Save these somewhere safe. If you forget your password, one of these codes
-          resets it — there is no email recovery. Each works once, and they are shown
-          only now.
+          Save these codes in a password manager. They can be used to recover your account if you
+          lose access. There is no email recovery.
         </p>
         <div className="grid grid-cols-2 gap-1.5 rounded-md border bg-muted/40 p-3 text-center font-mono text-sm">
           {codes.map((code) => (

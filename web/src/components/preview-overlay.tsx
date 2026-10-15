@@ -179,7 +179,7 @@ function TextPreview({ data }: { data: { content: string; truncated: boolean } }
     <div className="flex max-h-[85vh] w-[min(90vw,64rem)] flex-col overflow-hidden rounded-lg bg-card shadow-2xl">
       {data.truncated && (
         <p className="shrink-0 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
-          Showing the first 2 MB — download the file to see the rest.
+          Showing the first 2 MB. Download the file to see the rest.
         </p>
       )}
       <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap wrap-break-word p-4 font-mono text-xs leading-relaxed">

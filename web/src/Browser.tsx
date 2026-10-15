@@ -3006,7 +3006,7 @@ function JobsPanel({
   return (
     <div className="w-80 max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-4 shadow-lg">
       <div className="flex items-center">
-        <p className="text-sm font-medium">{active > 0 ? `Working — ${active} active` : 'Tasks'}</p>
+        <p className="text-sm font-medium">{active > 0 ? `Working: ${active} active` : 'Tasks'}</p>
         {active === 0 && (
           <Button variant="ghost" size="sm" className="ml-auto" onClick={onClear}>
             Clear
@@ -3104,7 +3104,7 @@ function Transfers({
     <div className="w-80 max-w-[calc(100vw-2rem)] rounded-xl border bg-card p-4 shadow-lg">
       <div className="flex items-center">
         <p className="text-sm font-medium">
-          {busy ? `Uploading — ${remaining} left` : 'Transfers'}
+          {busy ? `Uploading: ${remaining} left` : 'Transfers'}
         </p>
         {busy ? (
           <Button
